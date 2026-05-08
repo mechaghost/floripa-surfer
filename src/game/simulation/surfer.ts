@@ -71,11 +71,10 @@ export function updateSurfer(state: SurferState, input: InputState, wave: WaveSa
   next.position.x += Math.sin(next.heading) * next.speed * dt + wave.slopeX * 5 * dt;
   next.position.z -= Math.cos(next.heading) * next.speed * dt;
 
-  if (input.trick && !next.activeTrick && (wave.lipPower > 0.72 || next.airtime > 0)) {
-    next.activeTrick = chooseTrick(input, wave.lipPower);
-    next.airtime = Math.max(next.airtime, 0.65 + wave.lipPower * 0.65);
-    next.verticalVelocity = 4 + wave.lipPower * 3.3;
-    next.combo = clamp(next.combo + 0.25, 1, 6);
+  if (input.trick && !next.activeTrick && next.airtime <= 0.04) {
+    next.activeTrick = createJumpAction(wave.lipPower);
+    next.airtime = Math.max(next.airtime, 0.85 + wave.lipPower * 0.4);
+    next.verticalVelocity = 4.6 + wave.lipPower * 2.1;
   }
 
   if (next.airtime > 0) {
@@ -90,9 +89,11 @@ export function updateSurfer(state: SurferState, input: InputState, wave: WaveSa
   if (next.activeTrick) {
     next.activeTrick.timer += dt;
     if (next.activeTrick.timer >= next.activeTrick.duration) {
-      const landingBonus = next.airtime > 0 ? 1.15 : 0.85;
-      next.score += Math.round(next.activeTrick.score * next.combo * landingBonus);
-      next.stoke = clamp(next.stoke + 0.18, 0, 1);
+      if (next.activeTrick.score > 0) {
+        const landingBonus = next.airtime > 0 ? 1.15 : 0.85;
+        next.score += Math.round(next.activeTrick.score * next.combo * landingBonus);
+        next.stoke = clamp(next.stoke + 0.18, 0, 1);
+      }
       next.activeTrick = null;
     }
   }
@@ -108,24 +109,12 @@ export function updateSurfer(state: SurferState, input: InputState, wave: WaveSa
   return next;
 }
 
-function chooseTrick(input: InputState, lipPower: number): ActiveTrick {
-  if (input.trickUp) {
-    return { name: 'Floater', timer: 0, duration: 0.55, score: 420, spin: 0.2 };
-  }
-
-  if (input.trickDown) {
-    return { name: 'Layback Snap', timer: 0, duration: 0.62, score: 520, spin: -0.35 };
-  }
-
-  if (input.trickLeft || input.trickRight) {
-    return {
-      name: input.trickLeft ? 'Reverse 360' : 'Air Re-entry',
-      timer: 0,
-      duration: 0.72,
-      score: 650 + Math.round(lipPower * 180),
-      spin: input.trickLeft ? -1 : 1,
-    };
-  }
-
-  return { name: 'Kickout Grab', timer: 0, duration: 0.48, score: 300, spin: 0 };
+function createJumpAction(lipPower: number): ActiveTrick {
+  return {
+    name: 'Jump',
+    timer: 0,
+    duration: 0.36 + lipPower * 0.08,
+    score: 0,
+    spin: 0,
+  };
 }

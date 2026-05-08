@@ -172,19 +172,15 @@ canvas {
 }
 
 .touch__tricks {
-  width: clamp(150px, 34vw, 214px);
+  width: clamp(92px, 20vw, 132px);
   aspect-ratio: 1;
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  grid-template-rows: repeat(3, 1fr);
-  gap: 8px;
-  align-items: center;
-  justify-items: center;
+  place-items: center;
 }
 
 .touch__button {
   appearance: none;
-  width: clamp(48px, 10vw, 66px);
+  width: clamp(64px, 13vw, 84px);
   aspect-ratio: 1;
   border: 1px solid rgba(255, 255, 255, 0.34);
   border-radius: 50%;
@@ -195,26 +191,6 @@ canvas {
   font: 900 clamp(1.25rem, 3vw, 1.9rem) / 1 Inter, system-ui, sans-serif;
   display: grid;
   place-items: center;
-}
-
-.touch__button[data-trick="trickUp"] {
-  grid-column: 2;
-  grid-row: 1;
-}
-
-.touch__button[data-trick="trickLeft"] {
-  grid-column: 1;
-  grid-row: 2;
-}
-
-.touch__button[data-trick="trickDown"] {
-  grid-column: 2;
-  grid-row: 2;
-}
-
-.touch__button[data-trick="trickRight"] {
-  grid-column: 3;
-  grid-row: 2;
 }
 
 .touch__button--primary {

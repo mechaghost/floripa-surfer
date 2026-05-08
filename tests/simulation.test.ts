@@ -3,6 +3,7 @@ import { createInitialSurferState, updateSurfer } from '../src/game/simulation/s
 import { createInputState } from '../src/game/input/inputState';
 import { sampleWave } from '../src/game/simulation/waves';
 import { dampAngle } from '../src/render/world';
+import { getSurferRenderBank, getSurferRenderHeading } from '../src/render/surferModel';
 
 describe('surfer simulation', () => {
   it('builds speed and face score when pumping down the wave', () => {
@@ -31,20 +32,19 @@ describe('surfer simulation', () => {
     expect(next.speed).toBeGreaterThan(0);
   });
 
-  it('starts a trick only from the wave lip or airtime', () => {
+  it('starts a jump action from the action input', () => {
     const state = createInitialSurferState();
     const input = createInputState();
     input.trick = true;
     input.trickUp = true;
 
     const flatWave = { height: 0, slopeX: 0, slopeZ: 0, lipPower: 0.1, facePower: 0.2 };
-    const flat = updateSurfer(state, input, flatWave, 0.16);
-    expect(flat.activeTrick).toBeNull();
+    const jumped = updateSurfer(state, input, flatWave, 0.16);
 
-    const lipWave = { height: 1.6, slopeX: 0.2, slopeZ: -0.7, lipPower: 1, facePower: 0.9 };
-    const launched = updateSurfer(state, input, lipWave, 0.16);
-    expect(launched.activeTrick?.name).toBe('Floater');
-    expect(launched.airtime).toBeGreaterThan(0);
+    expect(jumped.activeTrick?.name).toBe('Jump');
+    expect(jumped.airtime).toBeGreaterThan(0);
+    expect(jumped.verticalVelocity).toBeGreaterThan(0);
+    expect(jumped.combo).toBe(state.combo);
   });
 
   it('keeps the board close to the water plane on steep wave faces', () => {
@@ -80,5 +80,13 @@ describe('camera helpers', () => {
 
     expect(next).toBeGreaterThan(nearlyPositivePi);
     expect(next).toBeLessThan(Math.PI + 0.08);
+  });
+
+  it('mirrors sim heading into Three.js render yaw so the board faces its travel direction', () => {
+    expect(getSurferRenderHeading(-0.35)).toBeCloseTo(0.35);
+  });
+
+  it('mirrors sim bank into Three.js render roll so the board leans into the turn', () => {
+    expect(getSurferRenderBank(-0.4)).toBeCloseTo(0.4);
   });
 });

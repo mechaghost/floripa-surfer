@@ -6,8 +6,6 @@ export type TouchControls = {
   dispose: () => void;
 };
 
-type TrickDirection = 'trickUp' | 'trickDown' | 'trickLeft' | 'trickRight';
-
 export function createTouchControls(input: InputState): TouchControls {
   const root = document.createElement('div');
   root.className = 'touch';
@@ -16,21 +14,18 @@ export function createTouchControls(input: InputState): TouchControls {
       <div class="touch__ring"></div>
       <div class="touch__knob" data-knob></div>
     </div>
-    <div class="touch__tricks" aria-label="Tricks">
-      <button class="touch__button" type="button" data-trick="trickUp" aria-label="Floater">↑</button>
-      <button class="touch__button" type="button" data-trick="trickLeft" aria-label="Reverse">↺</button>
-      <button class="touch__button touch__button--primary" type="button" data-trick="trickDown" aria-label="Layback">✦</button>
-      <button class="touch__button" type="button" data-trick="trickRight" aria-label="Re-entry">↻</button>
+    <div class="touch__tricks" aria-label="Jump action">
+      <button class="touch__button touch__button--primary" type="button" data-jump aria-label="Jump">↑</button>
     </div>
   `;
 
   const pad = root.querySelector<HTMLElement>('[data-pad]');
   const knob = root.querySelector<HTMLElement>('[data-knob]');
-  const buttons = Array.from(root.querySelectorAll<HTMLButtonElement>('[data-trick]'));
+  const jumpButton = root.querySelector<HTMLButtonElement>('[data-jump]');
   const disposers: Array<() => void> = [];
   let padPointer: number | null = null;
 
-  if (!pad || !knob) {
+  if (!pad || !knob || !jumpButton) {
     throw new Error('Touch controls failed to initialize');
   }
 
@@ -84,36 +79,30 @@ export function createTouchControls(input: InputState): TouchControls {
     pad.removeEventListener('pointercancel', onPadUp);
   });
 
-  for (const button of buttons) {
-    const direction = button.dataset.trick as TrickDirection;
-    const setTrick = (active: boolean) => {
-      input.trick = active;
-      input.trickUp = false;
-      input.trickDown = false;
-      input.trickLeft = false;
-      input.trickRight = false;
-      if (active) {
-        input[direction] = true;
-      }
-      button.classList.toggle('touch__button--active', active);
-    };
-    const down = (event: PointerEvent) => {
-      capturePointer(button, event.pointerId);
-      setTrick(true);
-    };
-    const up = () => setTrick(false);
+  const setJump = (active: boolean) => {
+    input.trick = active;
+    input.trickUp = false;
+    input.trickDown = false;
+    input.trickLeft = false;
+    input.trickRight = false;
+    jumpButton.classList.toggle('touch__button--active', active);
+  };
+  const onJumpDown = (event: PointerEvent) => {
+    capturePointer(jumpButton, event.pointerId);
+    setJump(true);
+  };
+  const onJumpUp = () => setJump(false);
 
-    button.addEventListener('pointerdown', down);
-    button.addEventListener('pointerup', up);
-    button.addEventListener('pointercancel', up);
-    button.addEventListener('lostpointercapture', up);
-    disposers.push(() => {
-      button.removeEventListener('pointerdown', down);
-      button.removeEventListener('pointerup', up);
-      button.removeEventListener('pointercancel', up);
-      button.removeEventListener('lostpointercapture', up);
-    });
-  }
+  jumpButton.addEventListener('pointerdown', onJumpDown);
+  jumpButton.addEventListener('pointerup', onJumpUp);
+  jumpButton.addEventListener('pointercancel', onJumpUp);
+  jumpButton.addEventListener('lostpointercapture', onJumpUp);
+  disposers.push(() => {
+    jumpButton.removeEventListener('pointerdown', onJumpDown);
+    jumpButton.removeEventListener('pointerup', onJumpUp);
+    jumpButton.removeEventListener('pointercancel', onJumpUp);
+    jumpButton.removeEventListener('lostpointercapture', onJumpUp);
+  });
 
   return {
     root,

@@ -25,6 +25,14 @@ export type SurferModel = {
   update: (state: SurferState, time: number) => void;
 };
 
+export function getSurferRenderHeading(simHeading: number): number {
+  return -simHeading;
+}
+
+export function getSurferRenderBank(simBank: number): number {
+  return -simBank;
+}
+
 export function createSurferModel(): SurferModel {
   const root = new Group();
   const trickPivot = new Group();
@@ -75,13 +83,14 @@ export function createSurferModel(): SurferModel {
   });
 
   function update(state: SurferState, time: number): void {
+    const renderBank = getSurferRenderBank(state.bank);
     root.position.set(state.position.x, state.height + 0.26, state.position.z);
-    root.rotation.set(state.pitch, state.heading, state.bank);
+    root.rotation.set(state.pitch, getSurferRenderHeading(state.heading), renderBank);
 
     const bounce = Math.sin(time * 10 + state.speed) * 0.025;
     torso.position.y = 0.82 + bounce;
-    leftArm.rotation.z = 0.7 + state.bank * 0.8;
-    rightArm.rotation.z = -0.7 + state.bank * 0.8;
+    leftArm.rotation.z = 0.7 + renderBank * 0.8;
+    rightArm.rotation.z = -0.7 + renderBank * 0.8;
 
     if (state.activeTrick) {
       const progress = state.activeTrick.timer / state.activeTrick.duration;

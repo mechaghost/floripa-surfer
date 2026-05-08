@@ -19,6 +19,8 @@ const CAMERA_DISTANCE = 7;
 const CAMERA_HEIGHT = 2.9;
 const CAMERA_LOOK_AHEAD = 1.6;
 const CAMERA_LOOK_HEIGHT = 1.1;
+const CAMERA_YAW_DAMPING = 1.45;
+const CAMERA_LOOK_YAW_DAMPING = 2.15;
 
 export type World = {
   scene: Scene;
@@ -33,8 +35,9 @@ export function createWorld(): World {
 
   const camera = new PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 400);
   const lookTarget = new Vector3();
-  let chaseHeading: number | null = null;
   let initialized = false;
+  let cameraHeading = 0;
+  let lookHeading = 0;
 
   const ambient = new AmbientLight('#d7fbff', 1.4);
   scene.add(ambient);
@@ -50,29 +53,38 @@ export function createWorld(): World {
 
   function updateCamera(state: SurferState, dt: number): void {
     const board = new Vector3(state.position.x, state.height + 0.4, state.position.z);
-    chaseHeading = chaseHeading === null ? state.heading : dampAngle(chaseHeading, state.heading, 5, dt);
-    const forward = new Vector3(Math.sin(chaseHeading), 0, -Math.cos(chaseHeading));
+    if (!initialized) {
+      cameraHeading = state.heading;
+      lookHeading = state.heading;
+    } else {
+      cameraHeading = dampAngle(cameraHeading, state.heading, CAMERA_YAW_DAMPING, dt);
+      lookHeading = dampAngle(lookHeading, state.heading, CAMERA_LOOK_YAW_DAMPING, dt);
+    }
+
+    const cameraForward = new Vector3(Math.sin(cameraHeading), 0, -Math.cos(cameraHeading));
+    const lookForward = new Vector3(Math.sin(lookHeading), 0, -Math.cos(lookHeading));
     const speedPush = Math.min(2, state.speed * 0.06);
-    const desiredPos = board
+    const distance = CAMERA_DISTANCE + speedPush;
+    const desiredPosition = board
       .clone()
-      .addScaledVector(forward, -(CAMERA_DISTANCE + speedPush))
+      .addScaledVector(cameraForward, -distance)
       .add(new Vector3(0, CAMERA_HEIGHT + state.airtime * 0.2, 0));
     const desiredLook = board
       .clone()
-      .addScaledVector(forward, CAMERA_LOOK_AHEAD + state.speed * 0.05)
+      .addScaledVector(lookForward, CAMERA_LOOK_AHEAD + state.speed * 0.05)
       .add(new Vector3(0, CAMERA_LOOK_HEIGHT, 0));
 
     if (!initialized) {
-      camera.position.copy(desiredPos);
+      camera.position.copy(desiredPosition);
       lookTarget.copy(desiredLook);
       initialized = true;
     } else {
-      camera.position.x = damp(camera.position.x, desiredPos.x, 6, dt);
-      camera.position.y = damp(camera.position.y, desiredPos.y, 4, dt);
-      camera.position.z = damp(camera.position.z, desiredPos.z, 6, dt);
-      lookTarget.x = damp(lookTarget.x, desiredLook.x, 8, dt);
-      lookTarget.y = damp(lookTarget.y, desiredLook.y, 6, dt);
-      lookTarget.z = damp(lookTarget.z, desiredLook.z, 8, dt);
+      camera.position.x = damp(camera.position.x, desiredPosition.x, 10, dt);
+      camera.position.y = damp(camera.position.y, desiredPosition.y, 7, dt);
+      camera.position.z = damp(camera.position.z, desiredPosition.z, 10, dt);
+      lookTarget.x = damp(lookTarget.x, desiredLook.x, 13, dt);
+      lookTarget.y = damp(lookTarget.y, desiredLook.y, 8, dt);
+      lookTarget.z = damp(lookTarget.z, desiredLook.z, 13, dt);
     }
     camera.lookAt(lookTarget);
 
