@@ -18,6 +18,14 @@ These candidate GLB files were downloaded while selecting a mobile-friendly surf
 - Format: GLB
 - License: Public Domain (CC0)
 
+## `woman-tank-top-quaternius.glb`
+
+- Title: Woman in Tank Top
+- Creator: Quaternius
+- Source: https://poly.pizza/m/XqzeZGB7iU
+- Format: GLB
+- License: Public Domain (CC0)
+
 ## `beach-bro-adam-dylewski.glb`
 
 - Title: Beach Bro

@@ -19,6 +19,7 @@ import type { SurferState } from '../game/simulation/surfer';
 
 const BOARD_DECK_Y = 0.07;
 const FOOT_DECK_SINK = 0.018;
+const RIDER_ASSET_URL = '/assets/models/woman-tank-top-quaternius.glb';
 
 export type SurferModel = {
   root: Group;
@@ -109,7 +110,7 @@ async function loadRidingAssets(assetRig: Group, fallback: Group): Promise<void>
   const loader = new GLTFLoader();
   const [boardGltf, riderGltf] = await Promise.all([
     loader.loadAsync('/assets/models/surfboard-jeremy.glb'),
-    loader.loadAsync('/assets/models/beach-character-quaternius.glb'),
+    loader.loadAsync(RIDER_ASSET_URL),
   ]);
 
   const board = prepareBoard(boardGltf.scene);
@@ -139,13 +140,11 @@ function prepareRider(model: Object3D, animations: AnimationClip[]): Group {
   model.position.x = -0.03;
   model.position.z = -0.02;
   model.rotation.y = Math.PI;
-  model.scale.y *= 0.72;
-  model.scale.x *= 1.08;
-  model.scale.z *= 1.04;
+  model.scale.x *= 1.02;
+  model.scale.z *= 1.02;
   wrapper.add(model);
   tintRiderForSurf(model);
   applyAnimationPose(model, animations);
-  applySurfPose(model);
   snapFeetToDeck(model, BOARD_DECK_Y);
   return wrapper;
 }
@@ -213,15 +212,38 @@ function tintRiderForSurf(model: Object3D): void {
       return;
     }
 
-    const name = child.material instanceof MeshStandardMaterial ? child.material.name.toLowerCase() : '';
-    if (name.includes('red')) {
-      child.material.color.set('#0c4051');
-      child.material.roughness = 0.58;
+    const materials = Array.isArray(child.material) ? child.material : [child.material];
+    for (const material of materials) {
+      if (!(material instanceof MeshStandardMaterial)) {
+        continue;
+      }
+
+      const name = material.name.toLowerCase();
+      material.roughness = 0.62;
+      material.metalness = 0.04;
+
+      if (name.includes('shirt')) {
+        material.color.set('#ee7651');
+      } else if (name.includes('pants')) {
+        material.color.set('#123f4d');
+      } else if (name.includes('skin')) {
+        material.color.set('#a46a49');
+      } else if (name.includes('hair')) {
+        material.color.set('#23150f');
+      } else if (name.includes('shoes')) {
+        material.color.set('#5b3728');
+      } else if (name.includes('red')) {
+        material.color.set('#0c4051');
+      }
     }
   });
 }
 
 function applyAnimationPose(model: Object3D, animations: AnimationClip[]): void {
+  if (animations.some((animation) => animation.name.startsWith('HumanArmature|Female_'))) {
+    return;
+  }
+
   const clip =
     AnimationClip.findByName(animations, 'CharacterArmature|Idle_Neutral')
     ?? AnimationClip.findByName(animations, 'CharacterArmature|Run_Left');
@@ -234,27 +256,6 @@ function applyAnimationPose(model: Object3D, animations: AnimationClip[]): void 
   const action = mixer.clipAction(clip);
   action.play();
   mixer.setTime(Math.min(0.32, clip.duration * 0.45));
-}
-
-function applySurfPose(model: Object3D): void {
-  const bones = new Map<string, Object3D>();
-  model.traverse((child) => bones.set(child.name, child));
-
-  rotateBone(bones, 'Hips', 0.08, 0, -0.08);
-  rotateBone(bones, 'Abdomen', -0.16, 0, 0.06);
-  rotateBone(bones, 'Torso', -0.08, 0, 0);
-  rotateBone(bones, 'Chest', 0.18, 0, 0.06);
-}
-
-function rotateBone(bones: Map<string, Object3D>, name: string, x: number, y: number, z: number): void {
-  const bone = bones.get(name);
-  if (!bone) {
-    return;
-  }
-
-  bone.rotation.x += x;
-  bone.rotation.y += y;
-  bone.rotation.z += z;
 }
 
 function limb(x: number, y: number, z: number, roll: number, material: MeshStandardMaterial): Mesh {
