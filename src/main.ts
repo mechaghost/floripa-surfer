@@ -20,7 +20,7 @@ import type { SurferState } from './game/simulation/surfer';
 import { createInitialSurferState, updateSurfer } from './game/simulation/surfer';
 import { sampleWave } from './game/simulation/waves';
 import { createOcean } from './render/ocean';
-import { createSurferModel } from './render/surferModel';
+import { createSurferModel, getSurferRenderHeading } from './render/surferModel';
 import { createWorld } from './render/world';
 import { createHud } from './ui/hud';
 import { createTouchControls } from './ui/touchControls';
@@ -179,19 +179,39 @@ type Spray = {
 
 function createSpray(): Spray {
   const root = new Group();
+  const halfBoardLength = 1.35;
   const material = new MeshBasicMaterial({
     color: new Color('#d8f9ff'),
     transparent: true,
     opacity: 0.58,
     depthWrite: false,
   });
-  const particles = Array.from({ length: 18 }, (_, index) => {
-    const mesh = new Mesh(new SphereGeometry(0.18, 8, 6), material.clone());
+  const geometry = new SphereGeometry(0.083, 7, 5);
+  const particles = Array.from({ length: 96 }, (_, index) => {
+    const mesh = new Mesh(geometry, material.clone());
     const lane = index % 2 === 0 ? -1 : 1;
-    const trail = 0.35 + index * 0.22;
-    mesh.position.set(lane * (0.18 + (index % 5) * 0.08), 0, trail);
+    const emitter = index < 66 ? 'tail' : 'nose';
+    const seed = index * 9.37 + 1.2;
+    const sideBias = 0.04 + pseudo(seed) * 0.14;
+    const sideVelocity = lane * (0.48 + pseudo(seed + 0.7) * 1.18);
+    const liftVelocity = 0.1 + pseudo(seed + 1.3) * 0.28;
+    const backVelocity = 1 + pseudo(seed + 2.1) * 2.2;
+    const lifetime = 0.38 + pseudo(seed + 3.8) * 0.42;
+    const phase = pseudo(seed + 5.4) * lifetime;
     root.add(mesh);
-    return { mesh, lane, trail, wobble: index * 1.73 };
+    return {
+      mesh,
+      emitter,
+      lane,
+      seed,
+      sideBias,
+      sideVelocity,
+      liftVelocity,
+      backVelocity,
+      lifetime,
+      phase,
+      size: 0.24 + pseudo(seed + 6.6) * 0.51,
+    };
   });
 
   function update(state: typeof surferState, lipPower: number, time: number): void {
@@ -200,22 +220,60 @@ function createSpray(): Spray {
       state.height + 0.08,
       state.position.z,
     );
-    root.rotation.y = state.heading;
+    root.rotation.y = getSurferRenderHeading(state.heading);
 
+    const forwardX = Math.sin(state.heading);
+    const forwardZ = -Math.cos(state.heading);
+    const pitchRise = Math.sin(state.pitch) * halfBoardLength;
+    const noseX = state.position.x + forwardX * halfBoardLength;
+    const noseZ = state.position.z + forwardZ * halfBoardLength;
+    const tailX = state.position.x - forwardX * halfBoardLength;
+    const tailZ = state.position.z - forwardZ * halfBoardLength;
+    const noseDepth = getContactDepth(sampleWave(noseX, noseZ, time).height, state.height - pitchRise);
+    const tailDepth = getContactDepth(sampleWave(tailX, tailZ, time).height, state.height + pitchRise);
     const intensity = Math.min(1, 0.2 + lipPower * 0.65 + state.speed * 0.025);
     for (const particle of particles) {
-      const pulse = 0.55 + Math.sin(time * 7.5 + particle.wobble) * 0.25;
-      const spread = 0.24 + particle.trail * 0.18;
-      particle.mesh.position.x = particle.lane * spread + Math.sin(time * 5 + particle.wobble) * 0.08;
-      particle.mesh.position.y = Math.sin(time * 8 + particle.wobble) * 0.045;
-      particle.mesh.position.z = particle.trail + pulse * 0.2;
-      const size = intensity * (0.32 - particle.trail * 0.035);
-      particle.mesh.scale.set(Math.max(0.05, size * 1.8), Math.max(0.03, size * 0.22), Math.max(0.05, size));
-      particle.mesh.material.opacity = Math.max(0.08, intensity * (0.62 - particle.trail * 0.1));
+      const isTail = particle.emitter === 'tail';
+      const contactDepth = isTail ? tailDepth : noseDepth;
+      const emitterIntensity = intensity * Math.min(1, isTail ? 0.55 + contactDepth * 1.7 : contactDepth * 3.2);
+      const cycle = (time * (1.05 + state.speed * 0.05) + particle.phase) % particle.lifetime;
+      const age = cycle / particle.lifetime;
+      const turbulence = Math.sin(time * 11 + particle.seed) * 0.12 + Math.sin(time * 4.6 + particle.seed * 1.7) * 0.07;
+      const gravityDrop = age * age * 0.52;
+      const wakePush = 0.82 + state.speed * 0.07 + lipPower * 0.55 + contactDepth * 0.85;
+      const fleckSize = emitterIntensity * particle.size * (1 - age * 0.78);
+      const foamStretch = 1.1 + age * 2.1 + state.speed * 0.018;
+      const originZ = isTail ? 0.78 : -0.92;
+      const zDirection = isTail ? 1 : -0.58;
+      const liftBoost = isTail ? 1 : 1.45;
+
+      particle.mesh.position.x =
+        particle.lane * particle.sideBias +
+        particle.sideVelocity * age * wakePush * (isTail ? 1 : 1.35) +
+        turbulence * (0.5 + age);
+      particle.mesh.position.y =
+        particle.liftVelocity * age * liftBoost +
+        contactDepth * 0.16 * (1 - age) -
+        gravityDrop +
+        Math.sin(time * 11 + particle.seed) * 0.035;
+      particle.mesh.position.z =
+        originZ +
+        particle.backVelocity * age * wakePush * zDirection +
+        Math.sin(time * 7.6 + particle.seed) * 0.13 * age;
+      particle.mesh.scale.set(
+        Math.max(0.018, fleckSize * (0.65 + age * 1.05)),
+        Math.max(0.009, fleckSize * 0.14),
+        Math.max(0.027, fleckSize * foamStretch),
+      );
+      particle.mesh.material.opacity = Math.max(0, emitterIntensity * (0.68 - age * 0.62));
     }
   }
 
   return { root, update };
+}
+
+function getContactDepth(waterHeight: number, boardHeight: number): number {
+  return Math.min(1, Math.max(0, (waterHeight - boardHeight + 0.22) * 1.4));
 }
 
 window.floripaSurfer = {
