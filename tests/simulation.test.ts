@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createInitialSurferState, updateSurfer } from '../src/game/simulation/surfer';
 import { createInputState } from '../src/game/input/inputState';
 import { sampleWave } from '../src/game/simulation/waves';
-import { dampAngle, getBoardVisualHeading } from '../src/render/world';
+import { dampAngle } from '../src/render/world';
 
 describe('surfer simulation', () => {
   it('builds speed and face score when pumping down the wave', () => {
@@ -80,9 +80,5 @@ describe('camera helpers', () => {
 
     expect(next).toBeGreaterThan(nearlyPositivePi);
     expect(next).toBeLessThan(Math.PI + 0.08);
-  });
-
-  it('maps the surfer sim heading to the imported board visual axis', () => {
-    expect(getBoardVisualHeading(0)).toBeCloseTo(-Math.PI / 2);
   });
 });

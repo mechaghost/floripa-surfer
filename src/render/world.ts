@@ -15,7 +15,10 @@ import {
 import type { SurferState } from '../game/simulation/surfer';
 import { damp } from '../game/simulation/math';
 
-const BOARD_VISUAL_FORWARD_OFFSET = -Math.PI / 2;
+const CAMERA_DISTANCE = 7;
+const CAMERA_HEIGHT = 2.9;
+const CAMERA_LOOK_AHEAD = 1.6;
+const CAMERA_LOOK_HEIGHT = 1.1;
 
 export type World = {
   scene: Scene;
@@ -29,10 +32,9 @@ export function createWorld(): World {
   scene.fog = new Fog('#b8eef5', 28, 155);
 
   const camera = new PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 400);
-  camera.position.set(-5, 4.2, 13);
   const lookTarget = new Vector3();
   let chaseHeading: number | null = null;
-  let lookHeading: number | null = null;
+  let initialized = false;
 
   const ambient = new AmbientLight('#d7fbff', 1.4);
   scene.add(ambient);
@@ -47,31 +49,31 @@ export function createWorld(): World {
   scene.add(backdrop);
 
   function updateCamera(state: SurferState, dt: number): void {
-    const board = new Vector3(state.position.x, state.height + 0.38, state.position.z);
-    const followHeading = getBoardVisualHeading(state.heading);
-    chaseHeading = chaseHeading === null ? followHeading : dampAngle(chaseHeading, followHeading, 12, dt);
-    lookHeading = lookHeading === null ? followHeading : dampAngle(lookHeading, followHeading, 14, dt);
-    const chaseForward = new Vector3(Math.sin(chaseHeading), 0, -Math.cos(chaseHeading));
-    const lookForward = new Vector3(Math.sin(lookHeading), 0, -Math.cos(lookHeading));
-    const speedPush = Math.min(1.9, state.speed * 0.065);
-    const behind = new Vector3(
-      board.x,
-      board.y,
-      board.z,
-    )
-      .addScaledVector(chaseForward, -7.4 - speedPush)
-      .add(new Vector3(0, 3.1 + state.airtime * 0.25, 0));
-    const target = board
+    const board = new Vector3(state.position.x, state.height + 0.4, state.position.z);
+    chaseHeading = chaseHeading === null ? state.heading : dampAngle(chaseHeading, state.heading, 5, dt);
+    const forward = new Vector3(Math.sin(chaseHeading), 0, -Math.cos(chaseHeading));
+    const speedPush = Math.min(2, state.speed * 0.06);
+    const desiredPos = board
       .clone()
-      .addScaledVector(lookForward, 8.1 + state.speed * 0.18)
-      .add(new Vector3(0, 1.35, 0));
+      .addScaledVector(forward, -(CAMERA_DISTANCE + speedPush))
+      .add(new Vector3(0, CAMERA_HEIGHT + state.airtime * 0.2, 0));
+    const desiredLook = board
+      .clone()
+      .addScaledVector(forward, CAMERA_LOOK_AHEAD + state.speed * 0.05)
+      .add(new Vector3(0, CAMERA_LOOK_HEIGHT, 0));
 
-    camera.position.x = damp(camera.position.x, behind.x, 12, dt);
-    camera.position.y = damp(camera.position.y, behind.y, 7.8, dt);
-    camera.position.z = damp(camera.position.z, behind.z, 12, dt);
-    lookTarget.x = damp(lookTarget.x, target.x, 11, dt);
-    lookTarget.y = damp(lookTarget.y, target.y, 10, dt);
-    lookTarget.z = damp(lookTarget.z, target.z, 11, dt);
+    if (!initialized) {
+      camera.position.copy(desiredPos);
+      lookTarget.copy(desiredLook);
+      initialized = true;
+    } else {
+      camera.position.x = damp(camera.position.x, desiredPos.x, 6, dt);
+      camera.position.y = damp(camera.position.y, desiredPos.y, 4, dt);
+      camera.position.z = damp(camera.position.z, desiredPos.z, 6, dt);
+      lookTarget.x = damp(lookTarget.x, desiredLook.x, 8, dt);
+      lookTarget.y = damp(lookTarget.y, desiredLook.y, 6, dt);
+      lookTarget.z = damp(lookTarget.z, desiredLook.z, 8, dt);
+    }
     camera.lookAt(lookTarget);
 
     backdrop.position.x = state.position.x;
@@ -84,10 +86,6 @@ export function createWorld(): World {
 export function dampAngle(current: number, target: number, smoothing: number, dt: number): number {
   const delta = Math.atan2(Math.sin(target - current), Math.cos(target - current));
   return current + delta * (1 - Math.exp(-smoothing * dt));
-}
-
-export function getBoardVisualHeading(simHeading: number): number {
-  return simHeading + BOARD_VISUAL_FORWARD_OFFSET;
 }
 
 function createFloripaBackdrop(): Group {
