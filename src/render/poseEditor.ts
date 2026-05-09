@@ -183,6 +183,15 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
     activeState = ui.stateSelect.value || DEFAULT_POSE_STATE;
     loadState(activeState);
   });
+  ui.loadBaseButton.addEventListener('click', openLoadBaseModal);
+  ui.loadBaseCancelButton.addEventListener('click', closeLoadBaseModal);
+  ui.loadBaseCloseButton.addEventListener('click', closeLoadBaseModal);
+  ui.loadBaseConfirmButton.addEventListener('click', applyLoadBasePose);
+  ui.loadBaseModal.addEventListener('pointerdown', (event) => {
+    if (event.target === ui.loadBaseModal) {
+      closeLoadBaseModal();
+    }
+  });
   ui.saveStateButton.addEventListener('click', saveState);
   ui.resetSelectedButton.addEventListener('click', resetSelected);
   ui.resetAllButton.addEventListener('click', resetAll);
@@ -481,6 +490,60 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
     updateOutput();
   }
 
+  function openLoadBaseModal(): void {
+    populateLoadBaseSelect();
+    ui.loadBaseModal.hidden = false;
+    ui.loadBaseSelect.focus();
+  }
+
+  function closeLoadBaseModal(): void {
+    ui.loadBaseModal.hidden = true;
+  }
+
+  function populateLoadBaseSelect(): void {
+    const savedStateNames = getPoseStateOptions(poseLibrary, currentStateName())
+      .filter((name) => Boolean(poseLibrary.states[name]));
+    ui.loadBaseSelect.replaceChildren(...savedStateNames.map((name) => {
+      const option = document.createElement('option');
+      option.value = name;
+      option.textContent = name;
+      option.selected = name === currentStateName();
+      return option;
+    }));
+
+    if (savedStateNames.length === 0) {
+      const option = document.createElement('option');
+      option.value = '';
+      option.textContent = 'No saved poses';
+      ui.loadBaseSelect.append(option);
+    }
+
+    ui.loadBaseSelect.disabled = savedStateNames.length === 0;
+    ui.loadBaseConfirmButton.disabled = savedStateNames.length === 0;
+  }
+
+  function applyLoadBasePose(): void {
+    const sourceState = normalizePoseStateName(ui.loadBaseSelect.value);
+    const targetState = currentStateName();
+    const pose = poseLibrary.states[sourceState];
+    if (!pose) {
+      ui.status.textContent = `No saved "${sourceState}" pose to load.`;
+      closeLoadBaseModal();
+      return;
+    }
+
+    const before = captureCurrentPose();
+    applySavedPose(pose, markers, ikHandles);
+    const snapOffsetY = snapRiderToDeck();
+    offsetIkTargetsY(snapOffsetY);
+    activeState = targetState;
+    ui.stateSelect.value = targetState;
+    commitHistorySnapshot(before);
+    ui.status.textContent = `Loaded "${sourceState}" as base for "${targetState}".`;
+    updateOutput();
+    closeLoadBaseModal();
+  }
+
   function snapRiderToDeck(): number {
     if (!riderRoot) {
       return 0;
@@ -580,6 +643,9 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
     } else if (isUndoKey) {
       event.preventDefault();
       undoPoseEdit();
+    } else if (event.key === 'Escape' && !ui.loadBaseModal.hidden) {
+      event.preventDefault();
+      closeLoadBaseModal();
     }
   }
 }
@@ -1022,10 +1088,16 @@ function createPoseEditorUi(shell: HTMLElement): {
   selected: HTMLElement;
   status: HTMLElement;
   stateSelect: HTMLSelectElement;
+  loadBaseModal: HTMLElement;
+  loadBaseSelect: HTMLSelectElement;
   rotateButton: HTMLButtonElement;
   translateButton: HTMLButtonElement;
   undoButton: HTMLButtonElement;
   redoButton: HTMLButtonElement;
+  loadBaseButton: HTMLButtonElement;
+  loadBaseConfirmButton: HTMLButtonElement;
+  loadBaseCancelButton: HTMLButtonElement;
+  loadBaseCloseButton: HTMLButtonElement;
   solveIkButton: HTMLButtonElement;
   syncIkButton: HTMLButtonElement;
   saveStateButton: HTMLButtonElement;
@@ -1051,6 +1123,7 @@ function createPoseEditorUi(shell: HTMLElement): {
     </div>
     <div class="pose-editor__state">
       <select class="pose-editor__select" data-role="state-select" aria-label="Pose state"></select>
+      <button class="pose-editor__button" data-action="load-base" type="button">Load Base</button>
       <button class="pose-editor__button pose-editor__button--active" data-action="save-state" type="button">Save State</button>
     </div>
     <div class="pose-editor__actions">
@@ -1063,17 +1136,43 @@ function createPoseEditorUi(shell: HTMLElement): {
     </div>
     <div class="pose-editor__status">Click a joint to rotate it, or a purple IK target to move it.</div>
   `;
+  const loadBaseModal = document.createElement('div');
+  loadBaseModal.className = 'pose-editor-modal';
+  loadBaseModal.hidden = true;
+  loadBaseModal.innerHTML = `
+    <section class="pose-editor-modal__dialog" role="dialog" aria-modal="true" aria-labelledby="pose-editor-load-base-title">
+      <div class="pose-editor-modal__header">
+        <div id="pose-editor-load-base-title" class="pose-editor-modal__title">Load Base Pose</div>
+        <button class="pose-editor__button pose-editor-modal__close" data-action="load-base-close" type="button" aria-label="Close load base pose">X</button>
+      </div>
+      <label class="pose-editor-modal__field">
+        <span>Source Pose</span>
+        <select class="pose-editor__select" data-role="load-base-select" aria-label="Source pose"></select>
+      </label>
+      <div class="pose-editor-modal__actions">
+        <button class="pose-editor__button" data-action="load-base-cancel" type="button">Cancel</button>
+        <button class="pose-editor__button pose-editor__button--primary" data-action="load-base-confirm" type="button">Load Pose</button>
+      </div>
+    </section>
+  `;
   shell.append(panel);
+  shell.append(loadBaseModal);
 
   return {
     panel,
     selected: panel.querySelector('.pose-editor__selected') as HTMLElement,
     status: panel.querySelector('.pose-editor__status') as HTMLElement,
     stateSelect: panel.querySelector('[data-role="state-select"]') as HTMLSelectElement,
+    loadBaseModal,
+    loadBaseSelect: loadBaseModal.querySelector('[data-role="load-base-select"]') as HTMLSelectElement,
     rotateButton: panel.querySelector('[data-action="rotate"]') as HTMLButtonElement,
     translateButton: panel.querySelector('[data-action="translate"]') as HTMLButtonElement,
     undoButton: panel.querySelector('[data-action="undo"]') as HTMLButtonElement,
     redoButton: panel.querySelector('[data-action="redo"]') as HTMLButtonElement,
+    loadBaseButton: panel.querySelector('[data-action="load-base"]') as HTMLButtonElement,
+    loadBaseConfirmButton: loadBaseModal.querySelector('[data-action="load-base-confirm"]') as HTMLButtonElement,
+    loadBaseCancelButton: loadBaseModal.querySelector('[data-action="load-base-cancel"]') as HTMLButtonElement,
+    loadBaseCloseButton: loadBaseModal.querySelector('[data-action="load-base-close"]') as HTMLButtonElement,
     solveIkButton: panel.querySelector('[data-action="solve-ik"]') as HTMLButtonElement,
     syncIkButton: panel.querySelector('[data-action="sync-ik"]') as HTMLButtonElement,
     saveStateButton: panel.querySelector('[data-action="save-state"]') as HTMLButtonElement,
