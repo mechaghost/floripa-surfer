@@ -113,7 +113,7 @@ function tick(): void {
 
   ocean.update(elapsed, surferState.position);
   surfer.update(surferState, elapsed);
-  contactFoam.update(surferState, currentWave.lipPower, elapsed);
+  contactFoam.update(surferState, currentWave.lipPower, elapsed, dt);
   wake.update(surferState, currentWave.lipPower, elapsed, dt);
   spray.update(surferState, currentWave.lipPower, elapsed);
   waterCues.update(surferState, elapsed);
@@ -192,7 +192,7 @@ function pseudo(value: number): number {
 
 type BoardContactFoam = {
   root: Group;
-  update: (state: typeof surferState, lipPower: number, time: number) => void;
+  update: (state: typeof surferState, lipPower: number, time: number, dt: number) => void;
 };
 
 type FoamBubble = {
@@ -204,29 +204,31 @@ type FoamBubble = {
   sizeMultiplier: number;
   lift: number;
   wobble: number;
+  currentScale: number;
   seed: number;
 };
 
 function createBoardContactFoam(): BoardContactFoam {
   const root = new Group();
   const bubbles: FoamBubble[] = [];
-  const count = 460;
+  const count = 220;
   const boardHalfLength = 1.55;
   const boardHalfWidth = 0.34;
 
   for (let index = 0; index < count; index += 1) {
     const seed = index * 11.73 + 5.1;
     const mix = index / count;
-    const kind: FoamBubble['kind'] = mix < 0.68 ? 'rail' : mix < 0.84 ? 'splash' : 'wash';
+    const kind: FoamBubble['kind'] = mix < 0.74 ? 'rail' : mix < 0.84 ? 'splash' : 'wash';
     bubbles.push({
       kind,
       side: index % 2 === 0 ? -1 : 1,
       offset: pseudo(seed + 0.2),
-      speed: 0.12 + pseudo(seed + 1.7) * 0.36,
-      radius: 0.026 + pseudo(seed + 2.4) * 0.025,
+      speed: 0.045 + pseudo(seed + 1.7) * 0.16,
+      radius: 0.018 + pseudo(seed + 2.4) * 0.016,
       sizeMultiplier: 1 + Math.pow(pseudo(seed + 7.2), 1.35) * 6,
-      lift: 0.04 + pseudo(seed + 3.8) * 0.16,
-      wobble: 0.05 + pseudo(seed + 4.6) * 0.22,
+      lift: 0.018 + pseudo(seed + 3.8) * 0.055,
+      wobble: 0.018 + pseudo(seed + 4.6) * 0.075,
+      currentScale: 0,
       seed,
     });
   }
@@ -235,7 +237,7 @@ function createBoardContactFoam(): BoardContactFoam {
   const material = new MeshBasicMaterial({
     color: new Color('#f2ffff'),
     transparent: true,
-    opacity: 0.95,
+    opacity: 0.72,
     depthWrite: false,
   });
   const mesh = new InstancedMesh(geometry, material, count);
@@ -251,17 +253,19 @@ function createBoardContactFoam(): BoardContactFoam {
   const axis = new Vector3();
   const hiddenScale = new Vector3(0.001, 0.001, 0.001);
 
-  function update(state: typeof surferState, lipPower: number, time: number): void {
+  function update(state: typeof surferState, lipPower: number, time: number, dt: number): void {
     const forwardX = Math.sin(state.heading);
     const forwardZ = -Math.cos(state.heading);
     const rightX = Math.cos(state.heading);
     const rightZ = Math.sin(state.heading);
     const boardPitch = Math.sin(state.pitch);
     const speedFoam = Math.min(1, Math.max(0, (state.speed - 3.2) / 8));
-    const airborneFade = state.airtime > 0 || state.verticalVelocity !== 0 ? 0.35 : 1;
+    const centerWater = sampleWave(state.position.x, state.position.z, time);
+    const boardContact = Math.min(1, Math.max(0, (centerWater.height - state.height + 0.18) / 0.2));
+    const liftOffFade = state.verticalVelocity > 0.4 ? 0.25 : 1;
 
     bubbles.forEach((bubble, index) => {
-      const loop = wrap01(bubble.offset + time * bubble.speed + Math.sin(time * 0.45 + bubble.seed) * 0.035);
+      const loop = wrap01(bubble.offset + time * bubble.speed + Math.sin(time * 0.45 + bubble.seed) * 0.02);
       let localX = 0;
       let localZ = 0;
       let splashArc = 0;
@@ -269,51 +273,54 @@ function createBoardContactFoam(): BoardContactFoam {
 
       if (bubble.kind === 'rail') {
         const drift = Math.sin(time * 3.3 + bubble.seed) * bubble.wobble;
-        localZ = boardHalfLength - loop * boardHalfLength * 2.45 + drift;
-        localX = bubble.side * (boardHalfWidth + 0.04 + pseudo(bubble.seed + time * 0.18) * 0.2);
+        localZ = boardHalfLength * 0.86 - loop * boardHalfLength * 1.76 + drift;
+        const width = getBoardHalfWidthAt(localZ, boardHalfLength, boardHalfWidth);
+        localX = bubble.side * (width + 0.025 + pseudo(bubble.seed + time * 0.18) * 0.055);
       } else if (bubble.kind === 'splash') {
         const arcPhase = Math.sin(loop * Math.PI);
-        const cross = Math.sin(loop * Math.PI * 1.15 + bubble.seed) * 0.16;
-        localZ = boardHalfLength * 0.68 - loop * boardHalfLength * 2.05;
-        localX = bubble.side * (boardHalfWidth * (0.78 - loop * 0.9)) + cross;
-        splashArc = arcPhase * (0.22 + bubble.lift * 1.2);
-        overBoard = 1 - smoothstep(0.68, 0.96, Math.abs(localX) / boardHalfWidth);
+        const cross = Math.sin(loop * Math.PI * 1.15 + bubble.seed) * 0.105;
+        localZ = boardHalfLength * 0.58 - loop * boardHalfLength * 1.52;
+        const width = getBoardHalfWidthAt(localZ, boardHalfLength, boardHalfWidth);
+        localX = bubble.side * (width * (0.42 - loop * 0.48)) + cross;
+        splashArc = arcPhase * (0.075 + bubble.lift * 0.62);
+        overBoard = 1 - smoothstep(0.5, 0.92, Math.abs(localX) / Math.max(0.08, width));
       } else {
         const walk = loop * Math.PI * 2;
-        localZ = -boardHalfLength - 0.12 - loop * 0.9 + Math.sin(walk + bubble.seed) * 0.12;
-        localX = Math.sin(walk + bubble.seed) * (boardHalfWidth + 0.34) + Math.sin(time * 3.9 + bubble.seed) * 0.09;
+        localZ = -boardHalfLength * 0.9 - loop * 0.52 + Math.sin(walk + bubble.seed) * 0.08;
+        localX = Math.sin(walk + bubble.seed) * (boardHalfWidth + 0.12) + Math.sin(time * 3.9 + bubble.seed) * 0.045;
       }
 
       const x = state.position.x + rightX * localX + forwardX * localZ;
       const z = state.position.z + rightZ * localX + forwardZ * localZ;
       const water = sampleWave(x, z, time);
       const boardHeight = state.height - boardPitch * localZ - Math.sin(state.bank) * localX * 0.42;
-      const depth = getContactDepth(water.height, boardHeight);
+      const depth = getFoamContactDepth(water.height, boardHeight);
       const pressureBias = bubble.kind === 'rail'
-        ? Math.max(0, bubble.side * state.turn) * 0.22
+        ? Math.max(0, bubble.side * state.turn) * 0.08
         : bubble.kind === 'splash'
-          ? lipPower * 0.36 + overBoard * 0.18
-          : 0.22;
-      const contact = Math.min(1, (depth * (0.42 + speedFoam * 0.85) + pressureBias) * airborneFade);
-      const pulse = 0.72 + Math.sin(time * 9.5 + bubble.seed) * 0.18 + pseudo(bubble.seed + time * 0.31) * 0.2;
-      const size = bubble.radius * bubble.sizeMultiplier * Math.max(0, contact * pulse);
+          ? lipPower * 0.1 + overBoard * 0.06
+          : 0.07;
+      const contact = Math.min(1, depth * (0.38 + speedFoam * 0.34 + pressureBias) * boardContact * liftOffFade);
+      const pulse = 0.75 + Math.sin(time * 6.2 + bubble.seed) * 0.06 + pseudo(bubble.seed + time * 0.2) * 0.06;
+      const targetSize = bubble.radius * bubble.sizeMultiplier * Math.max(0, contact * pulse);
+      bubble.currentScale = dampScalar(bubble.currentScale, targetSize, targetSize > bubble.currentScale ? 7 : 44, dt);
 
-      if (size < 0.006) {
+      if (bubble.currentScale < 0.006) {
         matrix.compose(position.set(x, water.height, z), rotation, hiddenScale);
         mesh.setMatrixAt(index, matrix);
         return;
       }
 
       const orbit = time * (2.6 + bubble.speed * 10) + bubble.seed;
-      const bob = Math.sin(orbit) * bubble.lift + Math.sin(orbit * 1.9) * 0.025;
-      const waterLineY = water.height + 0.07 + bob + size * 0.45;
-      const splashY = boardHeight + 0.16 + splashArc + Math.sin(orbit * 1.7) * 0.025;
+      const bob = Math.sin(orbit) * bubble.lift + Math.sin(orbit * 1.9) * 0.015;
+      const waterLineY = water.height + 0.055 + bob + bubble.currentScale * 0.38;
+      const splashY = boardHeight + 0.14 + splashArc + Math.sin(orbit * 1.7) * 0.018;
       position.set(
-        x + Math.sin(orbit * 0.73) * 0.035,
+        x + Math.sin(orbit * 0.73) * 0.016,
         bubble.kind === 'splash' ? Math.max(waterLineY, splashY) : waterLineY,
-        z + Math.cos(orbit * 0.61) * 0.035,
+        z + Math.cos(orbit * 0.61) * 0.016,
       );
-      scale.setScalar(size * (0.92 + Math.sin(orbit * 1.23) * 0.18));
+      scale.setScalar(bubble.currentScale * (0.9 + Math.sin(orbit * 1.23) * 0.12));
       axis.set(Math.sin(bubble.seed), 1, Math.cos(bubble.seed * 1.3)).normalize();
       rotation.setFromAxisAngle(axis, orbit * 0.37);
       matrix.compose(position, rotation, scale);
@@ -333,6 +340,20 @@ function wrap01(value: number): number {
 function smoothstep(edge0: number, edge1: number, value: number): number {
   const t = Math.min(1, Math.max(0, (value - edge0) / (edge1 - edge0)));
   return t * t * (3 - 2 * t);
+}
+
+function getBoardHalfWidthAt(localZ: number, boardHalfLength: number, boardHalfWidth: number): number {
+  const normalized = Math.min(1, Math.abs(localZ) / boardHalfLength);
+  const noseTailTaper = smoothstep(0.5, 1, normalized);
+  return boardHalfWidth * (1 - noseTailTaper * 0.56);
+}
+
+function getFoamContactDepth(waterHeight: number, boardHeight: number): number {
+  return Math.min(1, Math.max(0, (waterHeight - boardHeight + 0.18) * 3.25));
+}
+
+function dampScalar(current: number, target: number, smoothing: number, dt: number): number {
+  return current + (target - current) * (1 - Math.exp(-smoothing * dt));
 }
 
 type Spray = {
