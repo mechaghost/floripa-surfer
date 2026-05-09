@@ -728,13 +728,13 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
     link.download = 'floripa-surfer-poses.json';
     link.click();
     URL.revokeObjectURL(url);
-    ui.status.textContent = 'Pose states exported as JSON.';
+    ui.status.textContent = 'Pose states exported as JSON. Commit that file to make poses durable for production.';
   }
 
   function copyPose(): void {
     updateOutput();
     void navigator.clipboard.writeText(poseJson).then(() => {
-      ui.status.textContent = 'Pose JSON copied.';
+      ui.status.textContent = 'Pose JSON copied. Commit it as a repo asset to make poses durable for production.';
     }).catch(() => {
       ui.status.textContent = 'Clipboard blocked. Use Export Poses instead.';
     });
@@ -745,7 +745,7 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
     poseLibrary = createPoseLibrarySnapshot(poseLibrary, activeState, markers, ikHandles);
     savePoseLibrary(poseLibrary);
     populateStateSelect(ui.stateSelect, poseLibrary, activeState);
-    ui.status.textContent = `Saved current pose to "${activeState}".`;
+    ui.status.textContent = `Saved "${activeState}" in this browser. Export poses to make them durable in git.`;
     updateOutput();
   }
 
@@ -821,6 +821,11 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
   }
 
   function openReferenceModal(): void {
+    setReferenceStatus(
+      referenceImageFile
+        ? `Ready to apply "${referenceImageFile.name}".`
+        : 'Choose a clear full-body image, then apply IK.',
+    );
     ui.referenceModal.hidden = false;
     ui.referenceInput.focus();
   }
@@ -836,6 +841,7 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
     if (!referenceImageFile) {
       ui.referencePreview.hidden = true;
       ui.referenceApplyButton.disabled = true;
+      setReferenceStatus('Choose a clear full-body image, then apply IK.');
       return;
     }
 
@@ -843,6 +849,7 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
     ui.referencePreview.src = referenceImageUrl;
     ui.referencePreview.hidden = false;
     ui.referenceApplyButton.disabled = false;
+    setReferenceStatus(`Ready to apply "${referenceImageFile.name}".`);
     ui.status.textContent = `Loaded reference image "${referenceImageFile.name}".`;
   }
 
@@ -858,25 +865,32 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
   async function applyReferenceImagePose(): Promise<void> {
     if (!referenceImageFile) {
       ui.status.textContent = 'Choose a reference image first.';
+      setReferenceStatus('Choose a reference image first.');
       return;
     }
 
     if (ikHandles.length === 0) {
       ui.status.textContent = 'IK handles are still loading.';
+      setReferenceStatus('IK handles are still loading.');
       return;
     }
 
     const before = captureCurrentPose();
     ui.referenceApplyButton.disabled = true;
+    setReferenceBusy(true);
+    setReferenceStatus('Detecting body landmarks from reference image...', true);
     ui.status.textContent = 'Detecting body landmarks from reference image...';
 
     try {
       const image = await loadReferenceImage(referenceImageFile);
+      setReferenceStatus('Loading pose detector...', true);
       const detector = await getReferencePoseDetector();
+      setReferenceStatus('Solving IK targets...', true);
       const result = detector.detect(image);
       const landmarks = result.landmarks?.[0];
       if (!landmarks) {
         ui.status.textContent = 'No full-body pose found in that image.';
+        setReferenceStatus('No full-body pose found in that image.');
         return;
       }
 
@@ -887,6 +901,7 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
       );
       if (appliedCount === 0) {
         ui.status.textContent = 'Pose found, but no confident IK landmarks were usable.';
+        setReferenceStatus('Pose found, but no confident IK landmarks were usable.');
         return;
       }
 
@@ -896,14 +911,29 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
       ui.status.textContent = clamped
         ? `Applied ${appliedCount} IK targets from reference image; some targets were clamped.`
         : `Applied ${appliedCount} IK targets from reference image.`;
+      setReferenceStatus(`Applied ${appliedCount} IK targets.`);
       updateOutput();
       closeReferenceModal();
     } catch (error: unknown) {
       console.error('Reference image pose failed.', error);
       ui.status.textContent = 'Could not apply that reference image.';
+      setReferenceStatus('Could not apply that reference image.');
     } finally {
+      setReferenceBusy(false);
       ui.referenceApplyButton.disabled = !referenceImageFile;
     }
+  }
+
+  function setReferenceBusy(isBusy: boolean): void {
+    ui.referenceApplyButton.textContent = isBusy ? 'Working...' : 'Apply IK';
+    ui.referenceStatus.classList.toggle('pose-editor-modal__status--busy', isBusy);
+    ui.referenceStatus.setAttribute('aria-busy', String(isBusy));
+  }
+
+  function setReferenceStatus(message: string, isBusy = false): void {
+    ui.referenceStatus.textContent = message;
+    ui.referenceStatus.classList.toggle('pose-editor-modal__status--busy', isBusy);
+    ui.referenceStatus.setAttribute('aria-busy', String(isBusy));
   }
 
   function applyReferenceLandmarksToIkTargets(
@@ -1790,6 +1820,7 @@ function createPoseEditorUi(shell: HTMLElement): {
   referenceModal: HTMLElement;
   referenceInput: HTMLInputElement;
   referencePreview: HTMLImageElement;
+  referenceStatus: HTMLElement;
   referenceViewSelect: HTMLSelectElement;
   referenceFlipInput: HTMLInputElement;
   viewButtons: Record<PoseCameraPreset, HTMLButtonElement>;
@@ -1854,6 +1885,7 @@ function createPoseEditorUi(shell: HTMLElement): {
       <button class="pose-editor__button" data-action="reference-image" type="button">Reference Image</button>
       <button class="pose-editor__button" data-action="copy" type="button">Copy Poses</button>
       <button class="pose-editor__button pose-editor__button--primary" data-action="save" type="button">Export Poses</button>
+      <a class="pose-editor__button pose-editor__link-button" href="./" aria-label="Exit pose editor">Exit</a>
     </div>
     <div class="pose-editor__status">Joint mode: click a joint to rotate it. Switch to IK mode for purple targets.</div>
   `;
@@ -1901,6 +1933,7 @@ function createPoseEditorUi(shell: HTMLElement): {
         <span>Flip Horizontal</span>
       </label>
       <img class="pose-editor-modal__preview" data-role="reference-preview" alt="Reference pose preview" hidden>
+      <div class="pose-editor-modal__status" data-role="reference-status" aria-live="polite">Choose a clear full-body image, then apply IK.</div>
       <div class="pose-editor-modal__actions">
         <button class="pose-editor__button" data-action="reference-cancel" type="button">Cancel</button>
         <button class="pose-editor__button pose-editor__button--primary" data-action="reference-apply" type="button" disabled>Apply IK</button>
@@ -1921,6 +1954,7 @@ function createPoseEditorUi(shell: HTMLElement): {
     referenceModal,
     referenceInput: referenceModal.querySelector('[data-role="reference-input"]') as HTMLInputElement,
     referencePreview: referenceModal.querySelector('[data-role="reference-preview"]') as HTMLImageElement,
+    referenceStatus: referenceModal.querySelector('[data-role="reference-status"]') as HTMLElement,
     referenceViewSelect: referenceModal.querySelector('[data-role="reference-view"]') as HTMLSelectElement,
     referenceFlipInput: referenceModal.querySelector('[data-role="reference-flip"]') as HTMLInputElement,
     viewButtons: {

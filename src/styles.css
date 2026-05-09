@@ -126,6 +126,12 @@ canvas {
   cursor: pointer;
 }
 
+.pose-editor__link-button {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+}
+
 .pose-editor__button:disabled {
   cursor: default;
   opacity: 0.42;
@@ -235,6 +241,33 @@ canvas {
   object-fit: contain;
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+.pose-editor-modal__status {
+  min-height: 20px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: rgba(223, 250, 255, 0.8);
+  font-size: 0.74rem;
+  line-height: 1.25;
+}
+
+.pose-editor-modal__status--busy::before {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  border: 2px solid rgba(255, 255, 255, 0.28);
+  border-top-color: rgba(255, 239, 92, 0.96);
+  border-radius: 999px;
+  content: "";
+  animation: pose-editor-spin 720ms linear infinite;
+}
+
+@keyframes pose-editor-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @media (max-width: 720px) {
