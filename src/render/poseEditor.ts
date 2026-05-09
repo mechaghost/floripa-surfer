@@ -47,6 +47,11 @@ const IK_REACH_MARGIN = 1.06;
 const IK_REACH_PADDING = 0.04;
 const DEFAULT_JOINT_LIMIT = new Vector3(1.05, 1.05, 1.05);
 const IK_JOINT_LIMITS: Record<string, Vector3> = {
+  Body: new Vector3(0.55, 0.75, 0.55),
+  Hips: new Vector3(0.65, 0.85, 0.65),
+  Abdomen: new Vector3(0.75, 0.8, 0.75),
+  Torso: new Vector3(0.8, 0.9, 0.8),
+  Neck: new Vector3(0.85, 0.95, 0.75),
   UpperArmL: new Vector3(1.55, 1.25, 1.35),
   UpperArmR: new Vector3(1.55, 1.25, 1.35),
   LowerArmL: new Vector3(1.45, 0.42, 0.42),
@@ -308,6 +313,7 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
   function selectJoint(marker: PoseMarker | null): void {
     selected = marker ? { type: 'joint', marker } : null;
     selectionMode = 'joint';
+    updateModeVisibility();
     for (const item of markers) {
       const material = item.mesh.material;
       if (material instanceof MeshBasicMaterial) {
@@ -334,6 +340,7 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
   function selectIk(handle: IkHandle | null): void {
     selected = handle ? { type: 'ik', handle } : null;
     selectionMode = 'ik';
+    updateModeVisibility();
     for (const marker of markers) {
       const material = marker.mesh.material;
       if (material instanceof MeshBasicMaterial) {
@@ -381,11 +388,17 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
     ui.selected.textContent = 'No selection';
   }
 
+  function updateModeVisibility(): void {
+    markerRoot.visible = selectionMode === 'joint';
+    ikRoot.visible = selectionMode === 'ik';
+  }
+
   function setMode(mode: TransformControlsMode): void {
     if (mode === 'translate') {
       transformControls.setMode('translate');
       editorMode = 'translate';
       selectionMode = 'ik';
+      updateModeVisibility();
       updateModeButtons('translate');
       if (selected?.type === 'ik') {
         transformControls.attach(selected.handle.target);
@@ -400,6 +413,7 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
     transformControls.setMode('rotate');
     editorMode = 'rotate';
     selectionMode = 'joint';
+    updateModeVisibility();
     updateModeButtons('rotate');
     if (selected?.type === 'joint') {
       transformControls.attach(selected.marker.bone);
@@ -1061,8 +1075,12 @@ function createIkHandles(rider: Object3D, ikRoot: Group): IkHandle[] {
   rider.traverse((child) => bones.set(child.name, child));
 
   const specs = [
+    { label: 'Head', effector: 'Head', links: ['Neck', 'Torso'], reachRoot: 'Torso' },
+    { label: 'Torso', effector: 'Torso', links: ['Abdomen', 'Hips'], reachRoot: 'Hips' },
     { label: 'Left Hand', effector: 'PalmL', links: ['LowerArmL', 'UpperArmL'], reachRoot: 'UpperArmL' },
     { label: 'Right Hand', effector: 'PalmR', links: ['LowerArmR', 'UpperArmR'], reachRoot: 'UpperArmR' },
+    { label: 'Left Knee', effector: 'LowerLegL', links: ['UpperLegL'], reachRoot: 'UpperLegL' },
+    { label: 'Right Knee', effector: 'LowerLegR', links: ['UpperLegR'], reachRoot: 'UpperLegR' },
     { label: 'Left Foot', effector: 'LowerLegL_end', links: ['LowerLegL', 'UpperLegL'], drivenBone: 'FootL', reachRoot: 'UpperLegL' },
     { label: 'Right Foot', effector: 'LowerLegR_end', links: ['LowerLegR', 'UpperLegR'], drivenBone: 'FootR', reachRoot: 'UpperLegR' },
   ];
@@ -1277,22 +1295,14 @@ function applySavedPose(pose: SavedPose, markers: PoseMarker[], ikHandles: IkHan
   }
 
   for (const handle of ikHandles) {
-    const saved = pose.ikTargets?.[handle.label] ?? getLegacyIkTarget(pose, handle.label);
+    const saved = pose.ikTargets?.[handle.label];
     if (!saved) {
+      syncIkTargetToSource(handle);
       continue;
     }
 
     handle.target.position.set(saved[0], saved[1], saved[2]);
   }
-}
-
-function getLegacyIkTarget(pose: SavedPose, label: string): [number, number, number] | undefined {
-  const legacyLabels: Record<string, string> = {
-    'Left Foot': 'Left Ankle',
-    'Right Foot': 'Right Ankle',
-  };
-  const legacyLabel = legacyLabels[label];
-  return legacyLabel ? pose.ikTargets?.[legacyLabel] : undefined;
 }
 
 function poseSignature(pose: SavedPose): string {
