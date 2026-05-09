@@ -38,7 +38,7 @@ const BOARD_DECK_Y = 0.07;
 const BOARD_HULL_BOTTOM_PERCENTILE = 0.15;
 const BOARD_HULL_CLEARANCE = 0.02;
 const BOARD_FIN_PROTRUSION_SCALE = 0.32;
-const FOOT_DECK_SINK = 0.018;
+const FOOT_DECK_SINK = 0.004;
 const BOARD_ASSET_URL = '/assets/models/surfboard-jeremy.glb';
 const HISTORY_LIMIT = 80;
 
@@ -133,6 +133,7 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
   let ikHandles: IkHandle[] = [];
   let selected: Selection | null = null;
   let skinnedMesh: SkinnedMesh | null = null;
+  let riderRoot: Object3D | null = null;
   let poseLibrary = loadPoseLibrary();
   let activeState = poseLibrary.activeState;
   let poseJson = '';
@@ -149,6 +150,7 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
 
   void loadEditorAssets().then(({ root, rider }) => {
     scene.add(root);
+    riderRoot = rider;
     basePose = captureBasePose(rider);
     skinnedMesh = findFirstSkinnedMesh(rider);
     markers = createBoneMarkers(rider, markerRoot);
@@ -472,9 +474,29 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
 
     const before = recordHistory ? captureCurrentPose() : null;
     applySavedPose(pose, markers, ikHandles);
+    const snapOffsetY = snapRiderToDeck();
+    offsetIkTargetsY(snapOffsetY);
     commitHistorySnapshot(before);
     ui.status.textContent = `Loaded "${normalized}".`;
     updateOutput();
+  }
+
+  function snapRiderToDeck(): number {
+    if (!riderRoot) {
+      return 0;
+    }
+
+    return snapFeetToDeck(riderRoot, BOARD_DECK_Y);
+  }
+
+  function offsetIkTargetsY(offsetY: number): void {
+    if (Math.abs(offsetY) < 0.0001) {
+      return;
+    }
+
+    for (const handle of ikHandles) {
+      handle.target.position.y += offsetY;
+    }
   }
 
   function currentStateName(): string {
@@ -714,10 +736,25 @@ function estimateBoardHullBottom(model: Object3D, fallbackY: number): number {
   return yValues[hullIndex];
 }
 
-function snapFeetToDeck(model: Object3D, deckY: number): void {
+function snapFeetToDeck(model: Object3D, deckY: number): number {
   model.updateMatrixWorld(true);
-  const box = new Box3().setFromObject(model);
-  model.position.y += deckY - FOOT_DECK_SINK - box.min.y;
+  const box = new Box3();
+  let hasFootBounds = false;
+
+  model.traverse((child) => {
+    if (child instanceof SkinnedMesh && child.name.includes('Feet')) {
+      box.expandByObject(child);
+      hasFootBounds = true;
+    }
+  });
+
+  if (!hasFootBounds) {
+    box.setFromObject(model);
+  }
+
+  const offsetY = deckY - FOOT_DECK_SINK - box.min.y;
+  model.position.y += offsetY;
+  return offsetY;
 }
 
 function tintRiderForSurf(model: Object3D): void {

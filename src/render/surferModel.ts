@@ -37,7 +37,7 @@ const BOARD_SURFACE_WIDTH = 0.82;
 const BOARD_FIN_PROTRUSION_SCALE = 0.32;
 const MAX_VISUAL_PITCH = 0.34;
 const MAX_VISUAL_BANK = 0.82;
-const FOOT_DECK_SINK = 0.018;
+const FOOT_DECK_SINK = 0.004;
 
 export type SurferModel = {
   root: Group;
