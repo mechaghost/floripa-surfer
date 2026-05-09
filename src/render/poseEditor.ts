@@ -43,6 +43,8 @@ const BOARD_ASSET_URL = '/assets/models/surfboard-jeremy.glb';
 const HISTORY_LIMIT = 80;
 const KEYBOARD_ROTATION_STEP = 0.035;
 const KEYBOARD_MOVE_STEP = 0.025;
+const IK_REACH_MARGIN = 1.06;
+const IK_REACH_PADDING = 0.04;
 const DEFAULT_JOINT_LIMIT = new Vector3(1.05, 1.05, 1.05);
 const IK_JOINT_LIMITS: Record<string, Vector3> = {
   UpperArmL: new Vector3(1.55, 1.25, 1.35),
@@ -89,6 +91,8 @@ type IkHandle = {
   effector: Object3D;
   links: Object3D[];
   drivenBone?: Object3D;
+  reachRoot?: Object3D;
+  maxReach?: number;
 };
 
 type Selection =
@@ -443,11 +447,12 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
     ), null, 2);
   }
 
-  function solveIk(): void {
+  function solveIk(): boolean {
     if (!skinnedMesh || ikHandles.length === 0) {
-      return;
+      return false;
     }
 
+    const clamped = clampIkTargetsToReach(ikHandles);
     const iks = ikHandles.map((handle): IK => {
       const mesh = skinnedMesh as SkinnedMesh;
       return {
@@ -462,8 +467,11 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
     new CCDIKSolver(skinnedMesh, iks).update();
     updateDrivenBonesFromTargets(ikHandles);
     updateMarkers(markers);
-    ui.status.textContent = 'IK solved. Save or export the pose when it looks right.';
+    ui.status.textContent = clamped
+      ? 'IK solved with unreachable target clamped to limb reach.'
+      : 'IK solved. Save or export the pose when it looks right.';
     updateOutput();
+    return clamped;
   }
 
   function createLimitedIkLink(mesh: SkinnedMesh, link: Object3D): IK['links'][number] {
@@ -497,6 +505,37 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
       handle.target.getWorldPosition(worldTarget);
       setObjectWorldPosition(handle.drivenBone, worldTarget);
     }
+  }
+
+  function clampIkTargetsToReach(handles: IkHandle[]): boolean {
+    let didClamp = false;
+    for (const handle of handles) {
+      didClamp = clampIkTargetToReach(handle) || didClamp;
+    }
+    return didClamp;
+  }
+
+  function clampIkTargetToReach(handle: IkHandle): boolean {
+    if (!handle.reachRoot || !handle.maxReach) {
+      return false;
+    }
+
+    const rootWorld = new Vector3();
+    const targetWorld = new Vector3();
+    handle.reachRoot.updateMatrixWorld(true);
+    handle.target.updateMatrixWorld(true);
+    handle.reachRoot.getWorldPosition(rootWorld);
+    handle.target.getWorldPosition(targetWorld);
+
+    const offset = targetWorld.sub(rootWorld);
+    const distance = offset.length();
+    if (distance <= handle.maxReach || distance < 0.0001) {
+      return false;
+    }
+
+    offset.multiplyScalar(handle.maxReach / distance);
+    setObjectWorldPosition(handle.target, rootWorld.add(offset));
+    return true;
   }
 
   function syncIkTargets(): void {
@@ -707,10 +746,12 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
 
     const amount = sign * KEYBOARD_MOVE_STEP * multiplier;
     selected.handle.target.position[activeAxis] += amount;
-    solveIk();
+    const clamped = solveIk();
     commitHistorySnapshot(before);
     updateOutput();
-    ui.status.textContent = `Moved IK ${selected.handle.label} on ${activeAxis.toUpperCase()}.`;
+    ui.status.textContent = clamped
+      ? `Moved IK ${selected.handle.label} on ${activeAxis.toUpperCase()} and clamped to limb reach.`
+      : `Moved IK ${selected.handle.label} on ${activeAxis.toUpperCase()}.`;
   }
 
   function onKeyDown(event: KeyboardEvent): void {
@@ -991,10 +1032,10 @@ function createIkHandles(rider: Object3D, ikRoot: Group): IkHandle[] {
   rider.traverse((child) => bones.set(child.name, child));
 
   const specs = [
-    { label: 'Left Hand', effector: 'PalmL', links: ['LowerArmL', 'UpperArmL'] },
-    { label: 'Right Hand', effector: 'PalmR', links: ['LowerArmR', 'UpperArmR'] },
-    { label: 'Left Foot', effector: 'LowerLegL_end', links: ['LowerLegL', 'UpperLegL'], drivenBone: 'FootL' },
-    { label: 'Right Foot', effector: 'LowerLegR_end', links: ['LowerLegR', 'UpperLegR'], drivenBone: 'FootR' },
+    { label: 'Left Hand', effector: 'PalmL', links: ['LowerArmL', 'UpperArmL'], reachRoot: 'UpperArmL' },
+    { label: 'Right Hand', effector: 'PalmR', links: ['LowerArmR', 'UpperArmR'], reachRoot: 'UpperArmR' },
+    { label: 'Left Foot', effector: 'LowerLegL_end', links: ['LowerLegL', 'UpperLegL'], drivenBone: 'FootL', reachRoot: 'UpperLegL' },
+    { label: 'Right Foot', effector: 'LowerLegR_end', links: ['LowerLegR', 'UpperLegR'], drivenBone: 'FootR', reachRoot: 'UpperLegR' },
   ];
 
   const targetGeometry = new SphereGeometry(0.055, 16, 10);
@@ -1003,6 +1044,7 @@ function createIkHandles(rider: Object3D, ikRoot: Group): IkHandle[] {
     const effector = bones.get(spec.effector);
     const links = spec.links.map((name) => bones.get(name));
     const drivenBone = spec.drivenBone ? bones.get(spec.drivenBone) : undefined;
+    const reachRoot = bones.get(spec.reachRoot);
     if (!effector || links.some((link) => !link)) {
       continue;
     }
@@ -1023,8 +1065,10 @@ function createIkHandles(rider: Object3D, ikRoot: Group): IkHandle[] {
       effector,
       links: links as Object3D[],
       drivenBone,
+      reachRoot,
     };
     syncIkTargetToSource(handle);
+    handle.maxReach = estimateIkReach(handle);
     handles.push(handle);
   }
 
@@ -1035,6 +1079,31 @@ function syncIkTargetToSource(handle: IkHandle): void {
   const source = handle.drivenBone ?? handle.effector;
   source.updateMatrixWorld(true);
   source.getWorldPosition(handle.target.position);
+}
+
+function estimateIkReach(handle: IkHandle): number | undefined {
+  if (!handle.reachRoot) {
+    return undefined;
+  }
+
+  const source = handle.drivenBone ?? handle.effector;
+  const chain = [
+    handle.reachRoot,
+    ...handle.links.slice().reverse().filter((link) => link !== handle.reachRoot),
+    source,
+  ];
+  let length = 0;
+  for (let index = 0; index < chain.length - 1; index += 1) {
+    const start = new Vector3();
+    const end = new Vector3();
+    chain[index].updateMatrixWorld(true);
+    chain[index + 1].updateMatrixWorld(true);
+    chain[index].getWorldPosition(start);
+    chain[index + 1].getWorldPosition(end);
+    length += start.distanceTo(end);
+  }
+
+  return length > 0 ? length * IK_REACH_MARGIN + IK_REACH_PADDING : undefined;
 }
 
 function setObjectWorldPosition(object: Object3D, worldPosition: Vector3): void {
