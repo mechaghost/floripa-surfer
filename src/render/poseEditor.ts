@@ -9,6 +9,7 @@ import {
   MeshBasicMaterial,
   MeshStandardMaterial,
   Object3D,
+  OrthographicCamera,
   PerspectiveCamera,
   PlaneGeometry,
   Raycaster,
@@ -50,6 +51,15 @@ const REFERENCE_POSE_MIN_VISIBILITY = 0.28;
 const MEDIAPIPE_TASKS_VERSION = '0.10.35';
 const MEDIAPIPE_WASM_URL = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MEDIAPIPE_TASKS_VERSION}/wasm`;
 const MEDIAPIPE_POSE_MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task';
+const POSE_CAMERA_ORTHO_HEIGHT = 3.8;
+const POSE_CAMERA_TARGET = new Vector3(0, 0.72, 0);
+const POSE_CAMERA_PRESET_OFFSETS: Record<PoseCameraPreset, Vector3> = {
+  iso: new Vector3(3.8, 2.2, 5),
+  left: new Vector3(-5.4, 0, 0),
+  right: new Vector3(5.4, 0, 0),
+  top: new Vector3(0, 5.4, 0.01),
+  down: new Vector3(0, -5.4, 0.01),
+};
 const DEFAULT_JOINT_LIMIT = new Vector3(1.05, 1.05, 1.05);
 const IK_JOINT_LIMITS: Record<string, Vector3> = {
   Body: new Vector3(0.55, 0.75, 0.55),
@@ -111,6 +121,8 @@ type Selection =
 
 type TransformAxis = 'x' | 'y' | 'z';
 type SelectionMode = 'joint' | 'ik';
+type PoseCameraPreset = 'iso' | 'left' | 'right' | 'top' | 'down';
+type PoseCameraProjection = 'perspective' | 'orthographic';
 type ReferenceImageView = 'side' | 'front';
 
 type ReferenceLandmark = {
@@ -134,6 +146,7 @@ type ReferencePoseDetector = {
 };
 
 const TRANSFORM_AXES: TransformAxis[] = ['x', 'y', 'z'];
+const POSE_CAMERA_PRESETS: PoseCameraPreset[] = ['iso', 'left', 'right', 'top', 'down'];
 const REFERENCE_TARGET_LANDMARKS: Record<string, number[]> = {
   Head: [0],
   Torso: [11, 12, 23, 24],
@@ -161,11 +174,16 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
   fillLight.position.set(-4, 3.5, -5);
   scene.add(fillLight);
 
-  const camera = new PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 60);
-  camera.position.set(3.8, 2.2, 5);
+  const perspectiveCamera = new PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 60);
+  const orthographicCamera = new OrthographicCamera(-1, 1, 1, -1, 0.1, 60);
+  let camera: PerspectiveCamera | OrthographicCamera = perspectiveCamera;
+  let cameraProjection: PoseCameraProjection = 'perspective';
+  let cameraPreset: PoseCameraPreset = 'iso';
+  camera.position.copy(POSE_CAMERA_TARGET).add(POSE_CAMERA_PRESET_OFFSETS.iso);
+  camera.lookAt(POSE_CAMERA_TARGET);
 
   const orbitControls = new OrbitControls(camera, renderer.domElement);
-  orbitControls.target.set(0, 0.7, 0);
+  orbitControls.target.copy(POSE_CAMERA_TARGET);
   orbitControls.enableDamping = true;
   orbitControls.dampingFactor = 0.08;
 
@@ -235,6 +253,10 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
   renderer.domElement.addEventListener('pointerdown', onPointerDown);
   ui.rotateButton.addEventListener('click', () => setMode('rotate'));
   ui.translateButton.addEventListener('click', () => setMode('translate'));
+  for (const preset of POSE_CAMERA_PRESETS) {
+    ui.viewButtons[preset].addEventListener('click', () => setCameraPreset(preset));
+  }
+  ui.projectionButton.addEventListener('click', toggleCameraProjection);
   for (const axis of TRANSFORM_AXES) {
     ui.axisButtons[axis].addEventListener('click', () => setActiveAxis(axis));
   }
@@ -292,6 +314,7 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
   window.addEventListener('pagehide', dispose);
 
   updateAxisButtons();
+  updateCameraViewButtons();
   resize();
   renderer.setAnimationLoop(render);
 
@@ -312,8 +335,19 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
       : window.innerHeight;
 
     renderer.setSize(width, height);
-    camera.aspect = width / height;
-    camera.updateProjectionMatrix();
+    updateCameraProjection(width, height);
+  }
+
+  function updateCameraProjection(width: number, height: number): void {
+    perspectiveCamera.aspect = width / height;
+    perspectiveCamera.updateProjectionMatrix();
+
+    const aspect = width / Math.max(height, 1);
+    orthographicCamera.left = -POSE_CAMERA_ORTHO_HEIGHT * aspect * 0.5;
+    orthographicCamera.right = POSE_CAMERA_ORTHO_HEIGHT * aspect * 0.5;
+    orthographicCamera.top = POSE_CAMERA_ORTHO_HEIGHT * 0.5;
+    orthographicCamera.bottom = -POSE_CAMERA_ORTHO_HEIGHT * 0.5;
+    orthographicCamera.updateProjectionMatrix();
   }
 
   function dispose(): void {
@@ -481,6 +515,45 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
     ui.translateButton.classList.toggle('pose-editor__button--active', mode === 'translate');
     ui.rotateButton.setAttribute('aria-pressed', String(mode === 'rotate'));
     ui.translateButton.setAttribute('aria-pressed', String(mode === 'translate'));
+  }
+
+  function setCameraPreset(preset: PoseCameraPreset): void {
+    cameraPreset = preset;
+    const nextPosition = POSE_CAMERA_TARGET.clone().add(POSE_CAMERA_PRESET_OFFSETS[preset]);
+    camera.position.copy(nextPosition);
+    camera.lookAt(POSE_CAMERA_TARGET);
+    camera.updateMatrixWorld(true);
+    orbitControls.target.copy(POSE_CAMERA_TARGET);
+    orbitControls.update();
+    ui.status.textContent = `${getCameraPresetLabel(preset)} view selected.`;
+    updateCameraViewButtons();
+  }
+
+  function toggleCameraProjection(): void {
+    cameraProjection = cameraProjection === 'perspective' ? 'orthographic' : 'perspective';
+    const previousPosition = camera.position.clone();
+    const previousQuaternion = camera.quaternion.clone();
+    camera = cameraProjection === 'orthographic' ? orthographicCamera : perspectiveCamera;
+    camera.position.copy(previousPosition);
+    camera.quaternion.copy(previousQuaternion);
+    camera.updateMatrixWorld(true);
+    orbitControls.object = camera;
+    transformControls.camera = camera;
+    resize();
+    orbitControls.update();
+    ui.status.textContent = cameraProjection === 'orthographic'
+      ? 'Orthographic camera enabled.'
+      : 'Perspective camera enabled.';
+    updateCameraViewButtons();
+  }
+
+  function updateCameraViewButtons(): void {
+    for (const preset of POSE_CAMERA_PRESETS) {
+      ui.viewButtons[preset].classList.toggle('pose-editor__button--active', preset === cameraPreset);
+      ui.viewButtons[preset].setAttribute('aria-pressed', String(preset === cameraPreset));
+    }
+    ui.projectionButton.classList.toggle('pose-editor__button--active', cameraProjection === 'orthographic');
+    ui.projectionButton.setAttribute('aria-pressed', String(cameraProjection === 'orthographic'));
   }
 
   function setActiveAxis(axis: TransformAxis): void {
@@ -1696,6 +1769,17 @@ function round(value: number): number {
   return Math.round(value * 10000) / 10000;
 }
 
+function getCameraPresetLabel(preset: PoseCameraPreset): string {
+  const labels: Record<PoseCameraPreset, string> = {
+    iso: 'Isometric',
+    left: 'Left',
+    right: 'Right',
+    top: 'Top',
+    down: 'Down',
+  };
+  return labels[preset];
+}
+
 function createPoseEditorUi(shell: HTMLElement): {
   panel: HTMLElement;
   selected: HTMLElement;
@@ -1708,6 +1792,8 @@ function createPoseEditorUi(shell: HTMLElement): {
   referencePreview: HTMLImageElement;
   referenceViewSelect: HTMLSelectElement;
   referenceFlipInput: HTMLInputElement;
+  viewButtons: Record<PoseCameraPreset, HTMLButtonElement>;
+  projectionButton: HTMLButtonElement;
   axisButtons: Record<TransformAxis, HTMLButtonElement>;
   rotateButton: HTMLButtonElement;
   translateButton: HTMLButtonElement;
@@ -1751,6 +1837,14 @@ function createPoseEditorUi(shell: HTMLElement): {
       <select class="pose-editor__select" data-role="state-select" aria-label="Pose state"></select>
       <button class="pose-editor__button" data-action="load-base" type="button">Load Base</button>
       <button class="pose-editor__button pose-editor__button--active" data-action="save-state" type="button">Save State</button>
+    </div>
+    <div class="pose-editor__views">
+      <button class="pose-editor__button pose-editor__button--active" data-view="iso" type="button" aria-pressed="true">Iso</button>
+      <button class="pose-editor__button" data-view="left" type="button" aria-pressed="false">Left</button>
+      <button class="pose-editor__button" data-view="right" type="button" aria-pressed="false">Right</button>
+      <button class="pose-editor__button" data-view="top" type="button" aria-pressed="false">Top</button>
+      <button class="pose-editor__button" data-view="down" type="button" aria-pressed="false">Down</button>
+      <button class="pose-editor__button" data-action="projection" type="button" aria-pressed="false">Ortho</button>
     </div>
     <div class="pose-editor__actions">
       <button class="pose-editor__button" data-action="solve-ik" type="button">Solve IK</button>
@@ -1829,6 +1923,14 @@ function createPoseEditorUi(shell: HTMLElement): {
     referencePreview: referenceModal.querySelector('[data-role="reference-preview"]') as HTMLImageElement,
     referenceViewSelect: referenceModal.querySelector('[data-role="reference-view"]') as HTMLSelectElement,
     referenceFlipInput: referenceModal.querySelector('[data-role="reference-flip"]') as HTMLInputElement,
+    viewButtons: {
+      iso: panel.querySelector('[data-view="iso"]') as HTMLButtonElement,
+      left: panel.querySelector('[data-view="left"]') as HTMLButtonElement,
+      right: panel.querySelector('[data-view="right"]') as HTMLButtonElement,
+      top: panel.querySelector('[data-view="top"]') as HTMLButtonElement,
+      down: panel.querySelector('[data-view="down"]') as HTMLButtonElement,
+    },
+    projectionButton: panel.querySelector('[data-action="projection"]') as HTMLButtonElement,
     axisButtons: {
       x: panel.querySelector('[data-axis="x"]') as HTMLButtonElement,
       y: panel.querySelector('[data-axis="y"]') as HTMLButtonElement,

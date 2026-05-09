@@ -89,6 +89,7 @@ canvas {
 
 .pose-editor__mode,
 .pose-editor__state,
+.pose-editor__views,
 .pose-editor__actions {
   display: flex;
   gap: 7px;
