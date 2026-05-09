@@ -35,7 +35,7 @@ const BOARD_HULL_CLEARANCE = 0.02;
 const BOARD_SURFACE_LENGTH = 2.9;
 const BOARD_SURFACE_WIDTH = 0.82;
 const BOARD_FIN_PROTRUSION_SCALE = 0.32;
-const MAX_VISUAL_PITCH = 0.34;
+const MAX_VISUAL_PITCH = 0.42;
 const MAX_VISUAL_BANK = 0.82;
 const FOOT_DECK_CLEARANCE = 0.018;
 
@@ -201,7 +201,7 @@ export function createSurferModel(): SurferModel {
   return { root, update };
 }
 
-function getOrganicBoardTrim(state: SurferState, time: number): { pitch: number; bank: number } {
+export function getOrganicBoardTrim(state: SurferState, time: number): { pitch: number; bank: number } {
   const forwardX = Math.sin(state.heading);
   const forwardZ = -Math.cos(state.heading);
   const rightX = Math.cos(state.heading);
@@ -232,8 +232,8 @@ function getOrganicBoardTrim(state: SurferState, time: number): { pitch: number;
 
   const speedFactor = clamp((state.speed - 4.5) / 11, 0, 1);
   const waterContact = state.airtime > 0 || state.verticalVelocity !== 0 ? 0.35 : 1;
-  const surfacePitch = clamp(Math.atan2(nose.height - tail.height, BOARD_SURFACE_LENGTH) * 0.62, -0.13, 0.15);
-  const surfaceBank = clamp(Math.atan2(rightRail.height - leftRail.height, BOARD_SURFACE_WIDTH) * 0.24, -0.08, 0.08);
+  const surfacePitch = clamp(Math.atan2(nose.height - tail.height, BOARD_SURFACE_LENGTH) * 1.05, -0.21, 0.24);
+  const surfaceBank = clamp(Math.atan2(rightRail.height - leftRail.height, BOARD_SURFACE_WIDTH) * 0.52, -0.17, 0.17);
   const livingPitch =
     (Math.sin(time * 2.15 + state.position.z * 0.08) * 0.028 +
       Math.sin(time * 4.4 + state.position.x * 0.11) * 0.012) *

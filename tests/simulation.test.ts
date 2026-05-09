@@ -3,7 +3,12 @@ import { createInitialSurferState, updateSurfer } from '../src/game/simulation/s
 import { createInputState } from '../src/game/input/inputState';
 import { sampleWave } from '../src/game/simulation/waves';
 import { dampAngle } from '../src/render/world';
-import { getSurferPoseTargets, getSurferRenderBank, getSurferRenderHeading } from '../src/render/surferModel';
+import {
+  getOrganicBoardTrim,
+  getSurferPoseTargets,
+  getSurferRenderBank,
+  getSurferRenderHeading,
+} from '../src/render/surferModel';
 
 describe('surfer simulation', () => {
   it('builds speed and face score when pumping down the wave', () => {
@@ -160,6 +165,19 @@ describe('camera helpers', () => {
 
   it('mirrors sim bank into Three.js render roll so the board leans into the turn', () => {
     expect(getSurferRenderBank(-0.4)).toBeCloseTo(0.4);
+  });
+
+  it('adds bounded wave-following trim to board pitch and bank', () => {
+    const state = createInitialSurferState();
+    state.position = { x: -3.2, z: 14.5 };
+    state.heading = -0.55;
+    state.speed = 12;
+
+    const trim = getOrganicBoardTrim(state, 2.4);
+
+    expect(Math.abs(trim.pitch) + Math.abs(trim.bank)).toBeGreaterThan(0.015);
+    expect(Math.abs(trim.pitch)).toBeLessThanOrEqual(0.3);
+    expect(Math.abs(trim.bank)).toBeLessThanOrEqual(0.24);
   });
 });
 
