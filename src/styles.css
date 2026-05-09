@@ -89,6 +89,7 @@ canvas {
 
 .pose-editor__mode,
 .pose-editor__state,
+.pose-editor__presets,
 .pose-editor__actions {
   display: flex;
   gap: 7px;
@@ -99,6 +100,12 @@ canvas {
   display: grid;
   grid-template-columns: minmax(84px, 0.8fr) minmax(110px, 1fr) auto auto;
   align-items: center;
+}
+
+.pose-editor__presets {
+  max-height: 78px;
+  overflow: auto;
+  padding: 1px 0;
 }
 
 .pose-editor__select,

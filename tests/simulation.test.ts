@@ -3,7 +3,7 @@ import { createInitialSurferState, updateSurfer } from '../src/game/simulation/s
 import { createInputState } from '../src/game/input/inputState';
 import { sampleWave } from '../src/game/simulation/waves';
 import { dampAngle } from '../src/render/world';
-import { getSurferRenderBank, getSurferRenderHeading } from '../src/render/surferModel';
+import { getSurferPoseTargets, getSurferRenderBank, getSurferRenderHeading } from '../src/render/surferModel';
 
 describe('surfer simulation', () => {
   it('builds speed and face score when pumping down the wave', () => {
@@ -29,6 +29,19 @@ describe('surfer simulation', () => {
 
     expect(next.turn).toBeLessThan(0);
     expect(next.bank).toBeLessThan(0);
+    expect(next.speed).toBeGreaterThan(0);
+  });
+
+  it('banks hard when carving right and preserves arcade control', () => {
+    const state = createInitialSurferState();
+    const input = createInputState();
+    input.right = 1;
+
+    const wave = sampleWave(state.position.x, state.position.z, 2);
+    const next = updateSurfer(state, input, wave, 0.25);
+
+    expect(next.turn).toBeGreaterThan(0);
+    expect(next.bank).toBeGreaterThan(0);
     expect(next.speed).toBeGreaterThan(0);
   });
 
@@ -147,5 +160,41 @@ describe('camera helpers', () => {
 
   it('mirrors sim bank into Three.js render roll so the board leans into the turn', () => {
     expect(getSurferRenderBank(-0.4)).toBeCloseTo(0.4);
+  });
+});
+
+describe('surfer pose targets', () => {
+  it('cycles four idle pose states for neutral grounded riding', () => {
+    const state = createInitialSurferState();
+    const targets = getSurferPoseTargets(state, 0.5);
+
+    expect(targets.find((target) => target.name === 'default')?.weight).toBe(1);
+    expect(targets.some((target) => target.name.startsWith('idle-') && target.weight > 0)).toBe(true);
+  });
+
+  it('maps carve direction to lean pose states', () => {
+    const leftState = createInitialSurferState();
+    leftState.turn = -0.9;
+    leftState.bank = -0.5;
+    const rightState = createInitialSurferState();
+    rightState.turn = 0.9;
+    rightState.bank = 0.5;
+
+    expect(getSurferPoseTargets(leftState, 1).some((target) => target.name === 'left-lean' && target.weight > 0)).toBe(true);
+    expect(getSurferPoseTargets(rightState, 1).some((target) => target.name === 'right-lean' && target.weight > 0)).toBe(true);
+  });
+
+  it('maps jump startup and airtime to separate pose states', () => {
+    const start = createInitialSurferState();
+    start.activeTrick = { name: 'Jump', timer: 0.03, duration: 0.4, score: 0, spin: 0 };
+    start.airtime = 0.8;
+    start.verticalVelocity = 4;
+    const air = createInitialSurferState();
+    air.activeTrick = null;
+    air.airtime = 0.5;
+    air.verticalVelocity = -1.2;
+
+    expect(getSurferPoseTargets(start, 1).some((target) => target.name === 'start-jump' && target.weight > 0.5)).toBe(true);
+    expect(getSurferPoseTargets(air, 1).some((target) => target.name === 'air-jump' && target.weight > 0.4)).toBe(true);
   });
 });

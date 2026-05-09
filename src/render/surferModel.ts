@@ -19,9 +19,14 @@ import type { SurferState } from '../game/simulation/surfer';
 import { sampleWave } from '../game/simulation/waves';
 import {
   DEFAULT_POSE_STATE,
+  IDLE_POSE_STATES,
   RIDER_ASSET_URL,
   applySavedPoseToObject,
-  loadStoredPoseState,
+  applyWeightedPosesToObject,
+  loadPoseLibrary,
+  type PoseLibrary,
+  type SavedPose,
+  type WeightedSavedPose,
 } from './poseState';
 
 const BOARD_DECK_Y = 0.07;
@@ -39,12 +44,69 @@ export type SurferModel = {
   update: (state: SurferState, time: number) => void;
 };
 
+type RiderPoseTarget = {
+  name: string;
+  weight: number;
+};
+
+type PreparedRider = {
+  wrapper: Group;
+  poseRoot: Object3D;
+  poseLibrary: PoseLibrary;
+};
+
+type RiderPoseController = {
+  poseRoot: Object3D;
+  poses: Map<string, SavedPose>;
+  weights: Map<string, number>;
+};
+
 export function getSurferRenderHeading(simHeading: number): number {
   return -simHeading;
 }
 
 export function getSurferRenderBank(simBank: number): number {
   return -simBank;
+}
+
+export function getSurferPoseTargets(state: SurferState, time: number): RiderPoseTarget[] {
+  const targets: RiderPoseTarget[] = [{ name: DEFAULT_POSE_STATE, weight: 1 }];
+  const leanLeft = clamp((Math.max(-state.turn, -state.bank * 1.2) - 0.08) / 0.95, 0, 1);
+  const leanRight = clamp((Math.max(state.turn, state.bank * 1.2) - 0.08) / 0.95, 0, 1);
+  const leanStrength = Math.max(leanLeft, leanRight);
+  const isAirborne = state.airtime > 0 || Math.abs(state.verticalVelocity) > 0.02;
+  const jumpProgress = state.activeTrick?.name === 'Jump'
+    ? clamp(state.activeTrick.timer / state.activeTrick.duration, 0, 1)
+    : null;
+  const startJump = jumpProgress === null ? 0 : 1 - smoothstep(0.24, 0.62, jumpProgress);
+  const airJump = jumpProgress === null
+    ? (isAirborne ? clamp(0.35 + Math.abs(state.verticalVelocity) * 0.12, 0, 0.92) : 0)
+    : Math.max(isAirborne ? 0.42 : 0, smoothstep(0.2, 0.58, jumpProgress));
+  const idleStrength = (1 - leanStrength) * (isAirborne ? 0 : 0.35);
+
+  if (idleStrength > 0.001) {
+    const idleCycle = wrapPositive(time / 3.6, IDLE_POSE_STATES.length);
+    const idleIndex = Math.floor(idleCycle);
+    const nextIdleIndex = (idleIndex + 1) % IDLE_POSE_STATES.length;
+    const blend = smoothstep(0.18, 0.82, idleCycle - idleIndex);
+    targets.push({ name: IDLE_POSE_STATES[idleIndex], weight: idleStrength * (1 - blend) });
+    targets.push({ name: IDLE_POSE_STATES[nextIdleIndex], weight: idleStrength * blend });
+  }
+
+  if (leanLeft > 0.001) {
+    targets.push({ name: 'left-lean', weight: leanLeft * 0.9 });
+  }
+  if (leanRight > 0.001) {
+    targets.push({ name: 'right-lean', weight: leanRight * 0.9 });
+  }
+  if (startJump > 0.001) {
+    targets.push({ name: 'start-jump', weight: startJump * 1.15 });
+  }
+  if (airJump > 0.001) {
+    targets.push({ name: 'air-jump', weight: airJump });
+  }
+
+  return targets;
 }
 
 export function createSurferModel(): SurferModel {
@@ -55,6 +117,7 @@ export function createSurferModel(): SurferModel {
   let visualPitch = 0;
   let visualBank = 0;
   let previousUpdateTime: number | null = null;
+  let riderPoseController: RiderPoseController | null = null;
   root.add(trickPivot);
   trickPivot.add(fallback, assetRig);
   assetRig.visible = false;
@@ -95,7 +158,9 @@ export function createSurferModel(): SurferModel {
   const leftLeg = limb(-0.24, 0.42, 0.32, 0.26, skinMaterial);
   const rightLeg = limb(0.24, 0.42, -0.42, -0.26, skinMaterial);
   fallback.add(leftArm, rightArm, leftLeg, rightLeg);
-  void loadRidingAssets(assetRig, fallback).catch((error: unknown) => {
+  void loadRidingAssets(assetRig, fallback).then((controller) => {
+    riderPoseController = controller;
+  }).catch((error: unknown) => {
     console.warn('Surfer GLB assets failed to load; using fallback model.', error);
   });
 
@@ -117,6 +182,9 @@ export function createSurferModel(): SurferModel {
     torso.position.y = 0.82 + bounce;
     leftArm.rotation.z = 0.7 + visualBank * 0.8;
     rightArm.rotation.z = -0.7 + visualBank * 0.8;
+    if (riderPoseController) {
+      updateRiderPose(riderPoseController, state, time, dt);
+    }
 
     if (state.activeTrick) {
       const progress = state.activeTrick.timer / state.activeTrick.duration;
@@ -181,6 +249,70 @@ function getOrganicBoardTrim(state: SurferState, time: number): { pitch: number;
   };
 }
 
+function createRiderPoseController(rider: PreparedRider): RiderPoseController | null {
+  const poses = new Map(Object.entries(rider.poseLibrary.states));
+  if (poses.size === 0) {
+    return null;
+  }
+  if (!poses.has(DEFAULT_POSE_STATE)) {
+    poses.set(DEFAULT_POSE_STATE, captureObjectPose(rider.poseRoot));
+  }
+
+  return {
+    poseRoot: rider.poseRoot,
+    poses,
+    weights: new Map(),
+  };
+}
+
+function updateRiderPose(controller: RiderPoseController, state: SurferState, time: number, dt: number): void {
+  const targetWeights = new Map(getSurferPoseTargets(state, time).map(({ name, weight }) => [name, weight]));
+  const poseNames = new Set([...controller.poses.keys(), ...targetWeights.keys()]);
+  for (const name of poseNames) {
+    const current = controller.weights.get(name) ?? 0;
+    const target = targetWeights.get(name) ?? 0;
+    const next = dampValue(current, target, target > current ? 7.5 : 5.5, dt);
+    if (next < 0.0001 && target <= 0) {
+      controller.weights.delete(name);
+    } else {
+      controller.weights.set(name, next);
+    }
+  }
+
+  const weightedPoses: WeightedSavedPose[] = [];
+  for (const [name, weight] of controller.weights) {
+    const pose = controller.poses.get(name);
+    if (pose && weight > 0.0001) {
+      weightedPoses.push({ pose, weight });
+    }
+  }
+
+  applyWeightedPosesToObject(weightedPoses, controller.poseRoot);
+}
+
+function captureObjectPose(root: Object3D): SavedPose {
+  const pose: SavedPose = {
+    asset: RIDER_ASSET_URL,
+    savedAt: new Date().toISOString(),
+    bones: {},
+    ikTargets: {},
+  };
+
+  root.traverse((child) => {
+    if (!child.name) {
+      return;
+    }
+
+    pose.bones[child.name] = {
+      position: [child.position.x, child.position.y, child.position.z],
+      rotation: [child.rotation.x, child.rotation.y, child.rotation.z],
+      scale: [child.scale.x, child.scale.y, child.scale.z],
+    };
+  });
+
+  return pose;
+}
+
 function dampValue(current: number, target: number, smoothing: number, dt: number): number {
   return current + (target - current) * (1 - Math.exp(-smoothing * dt));
 }
@@ -189,7 +321,16 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-async function loadRidingAssets(assetRig: Group, fallback: Group): Promise<void> {
+function smoothstep(edge0: number, edge1: number, value: number): number {
+  const t = clamp((value - edge0) / (edge1 - edge0), 0, 1);
+  return t * t * (3 - 2 * t);
+}
+
+function wrapPositive(value: number, length: number): number {
+  return ((value % length) + length) % length;
+}
+
+async function loadRidingAssets(assetRig: Group, fallback: Group): Promise<RiderPoseController | null> {
   const loader = new GLTFLoader();
   const [boardGltf, riderGltf] = await Promise.all([
     loader.loadAsync('/assets/models/surfboard-jeremy.glb'),
@@ -199,9 +340,10 @@ async function loadRidingAssets(assetRig: Group, fallback: Group): Promise<void>
   const board = prepareBoard(boardGltf.scene);
   const rider = prepareRider(riderGltf.scene, riderGltf.animations);
 
-  assetRig.add(board, rider);
+  assetRig.add(board, rider.wrapper);
   fallback.visible = false;
   assetRig.visible = true;
+  return createRiderPoseController(rider);
 }
 
 function prepareBoard(model: Object3D): Group {
@@ -217,7 +359,7 @@ function prepareBoard(model: Object3D): Group {
   return wrapper;
 }
 
-function prepareRider(model: Object3D, animations: AnimationClip[]): Group {
+function prepareRider(model: Object3D, animations: AnimationClip[]): PreparedRider {
   const wrapper = new Group();
   wrapper.name = 'RuntimeRider';
   normalizeAsset(model, 1.48, 'height');
@@ -229,9 +371,13 @@ function prepareRider(model: Object3D, animations: AnimationClip[]): Group {
   wrapper.add(model);
   tintRiderForSurf(model);
   applyAnimationPose(model, animations);
-  applyStoredDefaultPose(model);
+  const poseLibrary = loadPoseLibrary();
+  const defaultPose = poseLibrary.states[DEFAULT_POSE_STATE];
+  if (defaultPose) {
+    applySavedPoseToObject(defaultPose, model);
+  }
   snapFeetToDeck(model, BOARD_DECK_Y);
-  return wrapper;
+  return { wrapper, poseRoot: model, poseLibrary };
 }
 
 function normalizeAsset(model: Object3D, targetSize: number, axis: 'height' | 'longest'): void {
@@ -417,15 +563,6 @@ function applyAnimationPose(model: Object3D, animations: AnimationClip[]): void 
   const action = mixer.clipAction(clip);
   action.play();
   mixer.setTime(Math.min(0.32, clip.duration * 0.45));
-}
-
-function applyStoredDefaultPose(model: Object3D): void {
-  const pose = loadStoredPoseState(DEFAULT_POSE_STATE);
-  if (!pose) {
-    return;
-  }
-
-  applySavedPoseToObject(pose, model);
 }
 
 function limb(x: number, y: number, z: number, roll: number, material: MeshStandardMaterial): Mesh {
