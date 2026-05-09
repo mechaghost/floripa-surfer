@@ -211,6 +211,31 @@ canvas {
   text-transform: none;
 }
 
+.pose-editor-modal__file {
+  width: 100%;
+  min-height: 36px;
+  color: rgba(235, 255, 255, 0.9);
+}
+
+.pose-editor-modal__check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.7rem;
+  font-weight: 850;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(210, 250, 255, 0.76);
+}
+
+.pose-editor-modal__preview {
+  width: 100%;
+  max-height: 180px;
+  object-fit: contain;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+}
+
 @media (max-width: 720px) {
   .pose-editor {
     top: auto;

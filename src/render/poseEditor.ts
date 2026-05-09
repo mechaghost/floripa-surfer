@@ -45,6 +45,11 @@ const KEYBOARD_ROTATION_STEP = 0.035;
 const KEYBOARD_MOVE_STEP = 0.025;
 const IK_REACH_MARGIN = 1.06;
 const IK_REACH_PADDING = 0.04;
+const REFERENCE_POSE_DEPTH_SCALE = 0.28;
+const REFERENCE_POSE_MIN_VISIBILITY = 0.28;
+const MEDIAPIPE_TASKS_VERSION = '0.10.35';
+const MEDIAPIPE_WASM_URL = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MEDIAPIPE_TASKS_VERSION}/wasm`;
+const MEDIAPIPE_POSE_MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task';
 const DEFAULT_JOINT_LIMIT = new Vector3(1.05, 1.05, 1.05);
 const IK_JOINT_LIMITS: Record<string, Vector3> = {
   Body: new Vector3(0.55, 0.75, 0.55),
@@ -106,8 +111,40 @@ type Selection =
 
 type TransformAxis = 'x' | 'y' | 'z';
 type SelectionMode = 'joint' | 'ik';
+type ReferenceImageView = 'side' | 'front';
+
+type ReferenceLandmark = {
+  x: number;
+  y: number;
+  z: number;
+  visibility?: number;
+  presence?: number;
+};
+
+type ReferencePoint = {
+  x: number;
+  y: number;
+  z: number;
+};
+
+type ReferencePoseDetector = {
+  detect: (image: HTMLImageElement) => {
+    landmarks?: ReferenceLandmark[][];
+  };
+};
 
 const TRANSFORM_AXES: TransformAxis[] = ['x', 'y', 'z'];
+const REFERENCE_TARGET_LANDMARKS: Record<string, number[]> = {
+  Head: [0],
+  Torso: [11, 12, 23, 24],
+  'Left Hand': [15],
+  'Right Hand': [16],
+  'Left Knee': [25],
+  'Right Knee': [26],
+  'Left Foot': [27, 29, 31],
+  'Right Foot': [28, 30, 32],
+};
+let referencePoseDetectorPromise: Promise<ReferencePoseDetector> | null = null;
 
 export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer): void {
   shell.classList.add('game--pose-editor');
@@ -168,6 +205,8 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
   let activeState = poseLibrary.activeState;
   let poseJson = '';
   let pendingHistorySnapshot: SavedPose | null = null;
+  let referenceImageFile: File | null = null;
+  let referenceImageUrl: string | null = null;
   const undoStack: SavedPose[] = [];
   const redoStack: SavedPose[] = [];
   let basePose = new Map<Object3D, {
@@ -224,6 +263,18 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
       closeLoadBaseModal();
     }
   });
+  ui.referenceButton.addEventListener('click', openReferenceModal);
+  ui.referenceCancelButton.addEventListener('click', closeReferenceModal);
+  ui.referenceCloseButton.addEventListener('click', closeReferenceModal);
+  ui.referenceApplyButton.addEventListener('click', () => {
+    void applyReferenceImagePose();
+  });
+  ui.referenceInput.addEventListener('change', updateReferenceImageFile);
+  ui.referenceModal.addEventListener('pointerdown', (event) => {
+    if (event.target === ui.referenceModal) {
+      closeReferenceModal();
+    }
+  });
   ui.saveStateButton.addEventListener('click', saveState);
   ui.resetSelectedButton.addEventListener('click', resetSelected);
   ui.resetAllButton.addEventListener('click', resetAll);
@@ -271,6 +322,7 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
     window.removeEventListener('keydown', onKeyDown);
     window.removeEventListener('resize', resize);
     panelResizeObserver.disconnect();
+    clearReferenceImageUrl();
     orbitControls.dispose();
     transformControls.dispose();
     renderer.dispose();
@@ -695,6 +747,143 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
     closeLoadBaseModal();
   }
 
+  function openReferenceModal(): void {
+    ui.referenceModal.hidden = false;
+    ui.referenceInput.focus();
+  }
+
+  function closeReferenceModal(): void {
+    ui.referenceModal.hidden = true;
+  }
+
+  function updateReferenceImageFile(): void {
+    referenceImageFile = ui.referenceInput.files?.[0] ?? null;
+    clearReferenceImageUrl();
+
+    if (!referenceImageFile) {
+      ui.referencePreview.hidden = true;
+      ui.referenceApplyButton.disabled = true;
+      return;
+    }
+
+    referenceImageUrl = URL.createObjectURL(referenceImageFile);
+    ui.referencePreview.src = referenceImageUrl;
+    ui.referencePreview.hidden = false;
+    ui.referenceApplyButton.disabled = false;
+    ui.status.textContent = `Loaded reference image "${referenceImageFile.name}".`;
+  }
+
+  function clearReferenceImageUrl(): void {
+    if (!referenceImageUrl) {
+      return;
+    }
+
+    URL.revokeObjectURL(referenceImageUrl);
+    referenceImageUrl = null;
+  }
+
+  async function applyReferenceImagePose(): Promise<void> {
+    if (!referenceImageFile) {
+      ui.status.textContent = 'Choose a reference image first.';
+      return;
+    }
+
+    if (ikHandles.length === 0) {
+      ui.status.textContent = 'IK handles are still loading.';
+      return;
+    }
+
+    const before = captureCurrentPose();
+    ui.referenceApplyButton.disabled = true;
+    ui.status.textContent = 'Detecting body landmarks from reference image...';
+
+    try {
+      const image = await loadReferenceImage(referenceImageFile);
+      const detector = await getReferencePoseDetector();
+      const result = detector.detect(image);
+      const landmarks = result.landmarks?.[0];
+      if (!landmarks) {
+        ui.status.textContent = 'No full-body pose found in that image.';
+        return;
+      }
+
+      const appliedCount = applyReferenceLandmarksToIkTargets(
+        landmarks,
+        ui.referenceViewSelect.value as ReferenceImageView,
+        ui.referenceFlipInput.checked,
+      );
+      if (appliedCount === 0) {
+        ui.status.textContent = 'Pose found, but no confident IK landmarks were usable.';
+        return;
+      }
+
+      const clamped = solveIk();
+      commitHistorySnapshot(before);
+      setMode('translate');
+      ui.status.textContent = clamped
+        ? `Applied ${appliedCount} IK targets from reference image; some targets were clamped.`
+        : `Applied ${appliedCount} IK targets from reference image.`;
+      updateOutput();
+      closeReferenceModal();
+    } catch (error: unknown) {
+      console.error('Reference image pose failed.', error);
+      ui.status.textContent = 'Could not apply that reference image.';
+    } finally {
+      ui.referenceApplyButton.disabled = !referenceImageFile;
+    }
+  }
+
+  function applyReferenceLandmarksToIkTargets(
+    landmarks: ReferenceLandmark[],
+    imageView: ReferenceImageView,
+    flipHorizontal: boolean,
+  ): number {
+    const points = createReferencePointMap(landmarks);
+    const targetEntries = Array.from(points.entries())
+      .map(([label, point]) => ({ handle: ikHandles.find((item) => item.label === label), point }))
+      .filter((entry): entry is { handle: IkHandle; point: ReferencePoint } => Boolean(entry.handle));
+
+    if (targetEntries.length < 3) {
+      return 0;
+    }
+
+    const referenceBounds = getReferencePointBounds(targetEntries.map((entry) => entry.point));
+    const worldBounds = getIkWorldBounds(targetEntries.map((entry) => entry.handle));
+    if (!referenceBounds || !worldBounds) {
+      return 0;
+    }
+
+    const referenceCenter = points.get('Torso') ?? referenceBounds.center;
+    const torsoHandle = ikHandles.find((handle) => handle.label === 'Torso');
+    const worldCenter = torsoHandle
+      ? getObjectWorldPosition(torsoHandle.target)
+      : worldBounds.center;
+    const scale = worldBounds.height / Math.max(referenceBounds.height, 0.001);
+    const horizontalAxis = imageView === 'side'
+      ? new Vector3(0, 0, 1)
+      : new Vector3(1, 0, 0);
+    const depthAxis = imageView === 'side'
+      ? new Vector3(1, 0, 0)
+      : new Vector3(0, 0, 1);
+    const upAxis = new Vector3(0, 1, 0);
+    let appliedCount = 0;
+
+    for (const { handle, point } of targetEntries) {
+      const horizontal = (point.x - referenceCenter.x) * (flipHorizontal ? -1 : 1);
+      const vertical = referenceCenter.y - point.y;
+      const depth = referenceCenter.z - point.z;
+      const worldPosition = worldCenter.clone()
+        .addScaledVector(horizontalAxis, horizontal * scale)
+        .addScaledVector(upAxis, vertical * scale)
+        .addScaledVector(depthAxis, depth * scale * REFERENCE_POSE_DEPTH_SCALE);
+
+      setObjectWorldPosition(handle.target, worldPosition);
+      appliedCount += 1;
+    }
+
+    return appliedCount;
+  }
+
   function currentStateName(): string {
     return normalizePoseStateName(ui.stateSelect.value || activeState);
   }
@@ -803,12 +992,17 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
       closeLoadBaseModal();
       return;
     }
+    if (event.key === 'Escape' && !ui.referenceModal.hidden) {
+      event.preventDefault();
+      closeReferenceModal();
+      return;
+    }
 
     const target = event.target;
     if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) {
       return;
     }
-    if (!ui.loadBaseModal.hidden) {
+    if (!ui.loadBaseModal.hidden || !ui.referenceModal.hidden) {
       return;
     }
 
@@ -1195,6 +1389,13 @@ function setObjectWorldPosition(object: Object3D, worldPosition: Vector3): void 
   object.updateMatrixWorld(true);
 }
 
+function getObjectWorldPosition(object: Object3D): Vector3 {
+  const position = new Vector3();
+  object.updateMatrixWorld(true);
+  object.getWorldPosition(position);
+  return position;
+}
+
 function findFirstSkinnedMesh(model: Object3D): SkinnedMesh | null {
   let skinnedMesh: SkinnedMesh | null = null;
   model.traverse((child) => {
@@ -1215,6 +1416,150 @@ function ensureSkeletonIndex(skinnedMesh: SkinnedMesh, object: Object3D): number
   bones.push(object);
   skinnedMesh.skeleton.boneInverses.push(new Matrix4());
   return bones.length - 1;
+}
+
+async function getReferencePoseDetector(): Promise<ReferencePoseDetector> {
+  if (!referencePoseDetectorPromise) {
+    referencePoseDetectorPromise = createReferencePoseDetector();
+  }
+  return referencePoseDetectorPromise;
+}
+
+async function createReferencePoseDetector(): Promise<ReferencePoseDetector> {
+  const { FilesetResolver, PoseLandmarker } = await import('@mediapipe/tasks-vision');
+  const vision = await FilesetResolver.forVisionTasks(MEDIAPIPE_WASM_URL);
+
+  try {
+    return await PoseLandmarker.createFromOptions(vision, {
+      baseOptions: {
+        modelAssetPath: MEDIAPIPE_POSE_MODEL_URL,
+        delegate: 'GPU',
+      },
+      runningMode: 'IMAGE',
+      numPoses: 1,
+    }) as ReferencePoseDetector;
+  } catch {
+    return await PoseLandmarker.createFromOptions(vision, {
+      baseOptions: {
+        modelAssetPath: MEDIAPIPE_POSE_MODEL_URL,
+        delegate: 'CPU',
+      },
+      runningMode: 'IMAGE',
+      numPoses: 1,
+    }) as ReferencePoseDetector;
+  }
+}
+
+function loadReferenceImage(file: File): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(image);
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('Reference image could not load.'));
+    };
+    image.src = url;
+  });
+}
+
+function createReferencePointMap(landmarks: ReferenceLandmark[]): Map<string, ReferencePoint> {
+  const points = new Map<string, ReferencePoint>();
+  for (const [label, indexes] of Object.entries(REFERENCE_TARGET_LANDMARKS)) {
+    const point = averageReferenceLandmarks(landmarks, indexes);
+    if (point) {
+      points.set(label, point);
+    }
+  }
+  return points;
+}
+
+function averageReferenceLandmarks(
+  landmarks: ReferenceLandmark[],
+  indexes: number[],
+): ReferencePoint | null {
+  const visible = indexes
+    .map((index) => landmarks[index])
+    .filter((landmark): landmark is ReferenceLandmark => {
+      if (!landmark) {
+        return false;
+      }
+      const confidence = Math.max(landmark.visibility ?? 1, landmark.presence ?? 1);
+      return confidence >= REFERENCE_POSE_MIN_VISIBILITY;
+    });
+
+  if (visible.length === 0) {
+    return null;
+  }
+
+  const total = visible.reduce((sum, landmark) => {
+    sum.x += landmark.x;
+    sum.y += landmark.y;
+    sum.z += landmark.z;
+    return sum;
+  }, { x: 0, y: 0, z: 0 });
+
+  return {
+    x: total.x / visible.length,
+    y: total.y / visible.length,
+    z: total.z / visible.length,
+  };
+}
+
+function getReferencePointBounds(points: ReferencePoint[]): {
+  center: ReferencePoint;
+  height: number;
+} | null {
+  if (points.length === 0) {
+    return null;
+  }
+
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  let minZ = Infinity;
+  let maxZ = -Infinity;
+  for (const point of points) {
+    minX = Math.min(minX, point.x);
+    maxX = Math.max(maxX, point.x);
+    minY = Math.min(minY, point.y);
+    maxY = Math.max(maxY, point.y);
+    minZ = Math.min(minZ, point.z);
+    maxZ = Math.max(maxZ, point.z);
+  }
+
+  return {
+    center: {
+      x: (minX + maxX) * 0.5,
+      y: (minY + maxY) * 0.5,
+      z: (minZ + maxZ) * 0.5,
+    },
+    height: maxY - minY,
+  };
+}
+
+function getIkWorldBounds(handles: IkHandle[]): {
+  center: Vector3;
+  height: number;
+} | null {
+  if (handles.length === 0) {
+    return null;
+  }
+
+  const box = new Box3();
+  for (const handle of handles) {
+    box.expandByPoint(getObjectWorldPosition(handle.target));
+  }
+
+  const size = box.getSize(new Vector3());
+  return {
+    center: box.getCenter(new Vector3()),
+    height: Math.max(size.y, 0.001),
+  };
 }
 
 function createEditorDeck(): Group {
@@ -1358,6 +1703,11 @@ function createPoseEditorUi(shell: HTMLElement): {
   stateSelect: HTMLSelectElement;
   loadBaseModal: HTMLElement;
   loadBaseSelect: HTMLSelectElement;
+  referenceModal: HTMLElement;
+  referenceInput: HTMLInputElement;
+  referencePreview: HTMLImageElement;
+  referenceViewSelect: HTMLSelectElement;
+  referenceFlipInput: HTMLInputElement;
   axisButtons: Record<TransformAxis, HTMLButtonElement>;
   rotateButton: HTMLButtonElement;
   translateButton: HTMLButtonElement;
@@ -1367,6 +1717,10 @@ function createPoseEditorUi(shell: HTMLElement): {
   loadBaseConfirmButton: HTMLButtonElement;
   loadBaseCancelButton: HTMLButtonElement;
   loadBaseCloseButton: HTMLButtonElement;
+  referenceButton: HTMLButtonElement;
+  referenceApplyButton: HTMLButtonElement;
+  referenceCancelButton: HTMLButtonElement;
+  referenceCloseButton: HTMLButtonElement;
   solveIkButton: HTMLButtonElement;
   syncIkButton: HTMLButtonElement;
   saveStateButton: HTMLButtonElement;
@@ -1403,6 +1757,7 @@ function createPoseEditorUi(shell: HTMLElement): {
       <button class="pose-editor__button" data-action="sync-ik" type="button">Sync IK</button>
       <button class="pose-editor__button" data-action="reset-selected" type="button">Reset Selected</button>
       <button class="pose-editor__button" data-action="reset-all" type="button">Reset All</button>
+      <button class="pose-editor__button" data-action="reference-image" type="button">Reference Image</button>
       <button class="pose-editor__button" data-action="copy" type="button">Copy Poses</button>
       <button class="pose-editor__button pose-editor__button--primary" data-action="save" type="button">Export Poses</button>
     </div>
@@ -1427,8 +1782,40 @@ function createPoseEditorUi(shell: HTMLElement): {
       </div>
     </section>
   `;
+  const referenceModal = document.createElement('div');
+  referenceModal.className = 'pose-editor-modal';
+  referenceModal.hidden = true;
+  referenceModal.innerHTML = `
+    <section class="pose-editor-modal__dialog" role="dialog" aria-modal="true" aria-labelledby="pose-editor-reference-title">
+      <div class="pose-editor-modal__header">
+        <div id="pose-editor-reference-title" class="pose-editor-modal__title">Reference Image</div>
+        <button class="pose-editor__button pose-editor-modal__close" data-action="reference-close" type="button" aria-label="Close reference image">X</button>
+      </div>
+      <label class="pose-editor-modal__field">
+        <span>Image</span>
+        <input class="pose-editor-modal__file" data-role="reference-input" type="file" accept="image/*" aria-label="Reference image">
+      </label>
+      <label class="pose-editor-modal__field">
+        <span>View</span>
+        <select class="pose-editor__select" data-role="reference-view" aria-label="Reference view">
+          <option value="side" selected>Side</option>
+          <option value="front">Front</option>
+        </select>
+      </label>
+      <label class="pose-editor-modal__check">
+        <input data-role="reference-flip" type="checkbox">
+        <span>Flip Horizontal</span>
+      </label>
+      <img class="pose-editor-modal__preview" data-role="reference-preview" alt="Reference pose preview" hidden>
+      <div class="pose-editor-modal__actions">
+        <button class="pose-editor__button" data-action="reference-cancel" type="button">Cancel</button>
+        <button class="pose-editor__button pose-editor__button--primary" data-action="reference-apply" type="button" disabled>Apply IK</button>
+      </div>
+    </section>
+  `;
   shell.append(panel);
   shell.append(loadBaseModal);
+  shell.append(referenceModal);
 
   return {
     panel,
@@ -1437,6 +1824,11 @@ function createPoseEditorUi(shell: HTMLElement): {
     stateSelect: panel.querySelector('[data-role="state-select"]') as HTMLSelectElement,
     loadBaseModal,
     loadBaseSelect: loadBaseModal.querySelector('[data-role="load-base-select"]') as HTMLSelectElement,
+    referenceModal,
+    referenceInput: referenceModal.querySelector('[data-role="reference-input"]') as HTMLInputElement,
+    referencePreview: referenceModal.querySelector('[data-role="reference-preview"]') as HTMLImageElement,
+    referenceViewSelect: referenceModal.querySelector('[data-role="reference-view"]') as HTMLSelectElement,
+    referenceFlipInput: referenceModal.querySelector('[data-role="reference-flip"]') as HTMLInputElement,
     axisButtons: {
       x: panel.querySelector('[data-axis="x"]') as HTMLButtonElement,
       y: panel.querySelector('[data-axis="y"]') as HTMLButtonElement,
@@ -1450,6 +1842,10 @@ function createPoseEditorUi(shell: HTMLElement): {
     loadBaseConfirmButton: loadBaseModal.querySelector('[data-action="load-base-confirm"]') as HTMLButtonElement,
     loadBaseCancelButton: loadBaseModal.querySelector('[data-action="load-base-cancel"]') as HTMLButtonElement,
     loadBaseCloseButton: loadBaseModal.querySelector('[data-action="load-base-close"]') as HTMLButtonElement,
+    referenceButton: panel.querySelector('[data-action="reference-image"]') as HTMLButtonElement,
+    referenceApplyButton: referenceModal.querySelector('[data-action="reference-apply"]') as HTMLButtonElement,
+    referenceCancelButton: referenceModal.querySelector('[data-action="reference-cancel"]') as HTMLButtonElement,
+    referenceCloseButton: referenceModal.querySelector('[data-action="reference-close"]') as HTMLButtonElement,
     solveIkButton: panel.querySelector('[data-action="solve-ik"]') as HTMLButtonElement,
     syncIkButton: panel.querySelector('[data-action="sync-ik"]') as HTMLButtonElement,
     saveStateButton: panel.querySelector('[data-action="save-state"]') as HTMLButtonElement,
