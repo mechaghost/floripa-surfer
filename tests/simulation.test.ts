@@ -8,6 +8,7 @@ import {
   getSurferPoseTargets,
   getSurferRenderBank,
   getSurferRenderHeading,
+  getSurferVisualHeight,
 } from '../src/render/surferModel';
 
 describe('surfer simulation', () => {
@@ -165,6 +166,10 @@ describe('camera helpers', () => {
 
   it('mirrors sim bank into Three.js render roll so the board leans into the turn', () => {
     expect(getSurferRenderBank(-0.4)).toBeCloseTo(0.4);
+  });
+
+  it('sets the visual board close enough to sink into the wave surface', () => {
+    expect(getSurferVisualHeight(1.2)).toBeCloseTo(1.4);
   });
 
   it('adds bounded wave-following trim to board pitch and bank', () => {

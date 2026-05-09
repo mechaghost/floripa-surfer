@@ -38,6 +38,7 @@ const BOARD_FIN_PROTRUSION_SCALE = 0.32;
 const MAX_VISUAL_PITCH = 0.42;
 const MAX_VISUAL_BANK = 0.82;
 const FOOT_DECK_CLEARANCE = 0.018;
+const SURFER_VISUAL_HEIGHT_OFFSET = 0.2;
 
 export type SurferModel = {
   root: Group;
@@ -67,6 +68,10 @@ export function getSurferRenderHeading(simHeading: number): number {
 
 export function getSurferRenderBank(simBank: number): number {
   return -simBank;
+}
+
+export function getSurferVisualHeight(waterHeight: number): number {
+  return waterHeight + SURFER_VISUAL_HEIGHT_OFFSET;
 }
 
 export function getSurferPoseTargets(state: SurferState, time: number): RiderPoseTarget[] {
@@ -177,7 +182,7 @@ export function createSurferModel(): SurferModel {
     visualPitch = dampValue(visualPitch, targetPitch, 7.5, dt);
     visualBank = dampValue(visualBank, targetBank, 7.5, dt);
 
-    root.position.set(state.position.x, state.height + 0.26, state.position.z);
+    root.position.set(state.position.x, getSurferVisualHeight(state.height), state.position.z);
     root.rotation.set(visualPitch, getSurferRenderHeading(state.heading), visualBank);
 
     const bounce = Math.sin(time * 10 + state.speed) * 0.025;
