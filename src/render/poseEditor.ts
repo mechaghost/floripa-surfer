@@ -728,15 +728,15 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
     link.download = 'defaultPoseLibrary.json';
     link.click();
     URL.revokeObjectURL(url);
-    ui.status.textContent = 'Pose states exported. Replace src/data/defaultPoseLibrary.json and commit for production.';
+    ui.status.textContent = 'Production pose file downloaded. Replace src/data/defaultPoseLibrary.json and commit.';
   }
 
   function copyPose(): void {
     updateOutput();
     void navigator.clipboard.writeText(poseJson).then(() => {
-      ui.status.textContent = 'Pose JSON copied. Save it to src/data/defaultPoseLibrary.json and commit for production.';
+      ui.status.textContent = 'Production pose JSON copied. Save it to src/data/defaultPoseLibrary.json and commit.';
     }).catch(() => {
-      ui.status.textContent = 'Clipboard blocked. Use Export Poses instead.';
+      ui.status.textContent = 'Clipboard blocked. Use Download Pose File instead.';
     });
   }
 
@@ -1883,8 +1883,8 @@ function createPoseEditorUi(shell: HTMLElement): {
       <button class="pose-editor__button" data-action="reset-selected" type="button">Reset Selected</button>
       <button class="pose-editor__button" data-action="reset-all" type="button">Reset All</button>
       <button class="pose-editor__button" data-action="reference-image" type="button">Reference Image</button>
-      <button class="pose-editor__button" data-action="copy" type="button">Copy Poses</button>
-      <button class="pose-editor__button pose-editor__button--primary" data-action="save" type="button">Export Poses</button>
+      <button class="pose-editor__button" data-action="copy" type="button">Copy Pose File</button>
+      <button class="pose-editor__button pose-editor__button--primary" data-action="save" type="button">Download Pose File</button>
       <a class="pose-editor__button pose-editor__link-button" href="./" aria-label="Exit pose editor">Exit</a>
     </div>
     <div class="pose-editor__status">Joint mode: click a joint to rotate it. Switch to IK mode for purple targets.</div>
