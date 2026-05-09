@@ -34,11 +34,11 @@ import {
   savePoseLibrary,
 } from './poseState';
 
-const BOARD_DECK_Y = 0.07;
+const BOARD_DECK_TOP_PERCENTILE = 0.92;
 const BOARD_HULL_BOTTOM_PERCENTILE = 0.15;
 const BOARD_HULL_CLEARANCE = 0.02;
 const BOARD_FIN_PROTRUSION_SCALE = 0.32;
-const FOOT_DECK_SINK = 0.004;
+const FOOT_DECK_CLEARANCE = 0.018;
 const BOARD_ASSET_URL = '/assets/models/surfboard-jeremy.glb';
 const HISTORY_LIMIT = 80;
 const KEYBOARD_ROTATION_STEP = 0.035;
@@ -845,8 +845,10 @@ async function loadEditorAssets(): Promise<{ root: Group; rider: Object3D }> {
   ]);
 
   const root = new Group();
-  root.add(prepareBoard(boardGltf.scene));
-  const rider = prepareRider(riderGltf.scene);
+  const board = prepareBoard(boardGltf.scene);
+  const deckY = estimateBoardDeckTop(board);
+  root.add(board);
+  const rider = prepareRider(riderGltf.scene, deckY);
   root.add(rider);
   return { root, rider };
 }
@@ -863,7 +865,7 @@ function prepareBoard(model: Object3D): Group {
   return wrapper;
 }
 
-function prepareRider(model: Object3D): Object3D {
+function prepareRider(model: Object3D, deckY: number): Object3D {
   normalizeAsset(model, 1.48, 'height');
   model.position.x = -0.03;
   model.position.z = -0.02;
@@ -871,7 +873,7 @@ function prepareRider(model: Object3D): Object3D {
   model.scale.x *= 1.02;
   model.scale.z *= 1.02;
   tintRiderForSurf(model);
-  snapFeetToDeck(model, BOARD_DECK_Y);
+  snapFeetToDeck(model, deckY);
   return model;
 }
 
@@ -989,6 +991,39 @@ function estimateBoardHullBottom(model: Object3D, fallbackY: number): number {
   return yValues[hullIndex];
 }
 
+function estimateBoardDeckTop(model: Object3D): number {
+  const vertex = new Vector3();
+  const yValues: number[] = [];
+
+  model.updateMatrixWorld(true);
+  model.traverse((child) => {
+    if (!(child instanceof Mesh)) {
+      return;
+    }
+
+    const positions = child.geometry.getAttribute('position');
+    if (!positions) {
+      return;
+    }
+
+    for (let index = 0; index < positions.count; index += 1) {
+      vertex.fromBufferAttribute(positions, index).applyMatrix4(child.matrixWorld);
+      yValues.push(vertex.y);
+    }
+  });
+
+  if (yValues.length === 0) {
+    return 0;
+  }
+
+  yValues.sort((a, b) => a - b);
+  const deckIndex = Math.min(
+    yValues.length - 1,
+    Math.floor((yValues.length - 1) * BOARD_DECK_TOP_PERCENTILE),
+  );
+  return yValues[deckIndex];
+}
+
 function snapFeetToDeck(model: Object3D, deckY: number): void {
   model.updateMatrixWorld(true);
   const box = new Box3();
@@ -1005,7 +1040,7 @@ function snapFeetToDeck(model: Object3D, deckY: number): void {
     box.setFromObject(model);
   }
 
-  model.position.y += deckY - FOOT_DECK_SINK - box.min.y;
+  model.position.y += deckY + FOOT_DECK_CLEARANCE - box.min.y;
 }
 
 function tintRiderForSurf(model: Object3D): void {
