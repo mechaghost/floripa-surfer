@@ -196,11 +196,12 @@ type BoardContactFoam = {
 };
 
 type FoamBubble = {
-  kind: 'rail' | 'noseTail';
+  kind: 'rail' | 'wash' | 'splash';
   side: -1 | 1;
   offset: number;
   speed: number;
   radius: number;
+  sizeMultiplier: number;
   lift: number;
   wobble: number;
   seed: number;
@@ -215,14 +216,16 @@ function createBoardContactFoam(): BoardContactFoam {
 
   for (let index = 0; index < count; index += 1) {
     const seed = index * 11.73 + 5.1;
-    const rail = index < count * 0.76;
+    const mix = index / count;
+    const kind: FoamBubble['kind'] = mix < 0.68 ? 'rail' : mix < 0.84 ? 'splash' : 'wash';
     bubbles.push({
-      kind: rail ? 'rail' : 'noseTail',
+      kind,
       side: index % 2 === 0 ? -1 : 1,
       offset: pseudo(seed + 0.2),
-      speed: 0.08 + pseudo(seed + 1.7) * 0.22,
-      radius: 0.065 + pseudo(seed + 2.4) * 0.11,
-      lift: 0.04 + pseudo(seed + 3.8) * 0.12,
+      speed: 0.12 + pseudo(seed + 1.7) * 0.36,
+      radius: 0.026 + pseudo(seed + 2.4) * 0.025,
+      sizeMultiplier: 1 + Math.pow(pseudo(seed + 7.2), 1.35) * 6,
+      lift: 0.04 + pseudo(seed + 3.8) * 0.16,
       wobble: 0.05 + pseudo(seed + 4.6) * 0.22,
       seed,
     });
@@ -261,16 +264,24 @@ function createBoardContactFoam(): BoardContactFoam {
       const loop = wrap01(bubble.offset + time * bubble.speed + Math.sin(time * 0.45 + bubble.seed) * 0.035);
       let localX = 0;
       let localZ = 0;
+      let splashArc = 0;
+      let overBoard = 0;
 
       if (bubble.kind === 'rail') {
         const drift = Math.sin(time * 3.3 + bubble.seed) * bubble.wobble;
-        localZ = -boardHalfLength + loop * boardHalfLength * 2 + drift;
-        localX = bubble.side * (boardHalfWidth + 0.08 + pseudo(bubble.seed + time * 0.18) * 0.36);
+        localZ = boardHalfLength - loop * boardHalfLength * 2.45 + drift;
+        localX = bubble.side * (boardHalfWidth + 0.04 + pseudo(bubble.seed + time * 0.18) * 0.2);
+      } else if (bubble.kind === 'splash') {
+        const arcPhase = Math.sin(loop * Math.PI);
+        const cross = Math.sin(loop * Math.PI * 1.15 + bubble.seed) * 0.16;
+        localZ = boardHalfLength * 0.68 - loop * boardHalfLength * 2.05;
+        localX = bubble.side * (boardHalfWidth * (0.78 - loop * 0.9)) + cross;
+        splashArc = arcPhase * (0.22 + bubble.lift * 1.2);
+        overBoard = 1 - smoothstep(0.68, 0.96, Math.abs(localX) / boardHalfWidth);
       } else {
-        const end = bubble.side;
         const walk = loop * Math.PI * 2;
-        localZ = end * (boardHalfLength + 0.08 + Math.sin(walk + time * 1.4 + bubble.seed) * 0.22);
-        localX = Math.sin(walk + bubble.seed) * (boardHalfWidth + 0.22) + Math.sin(time * 3.9 + bubble.seed) * 0.08;
+        localZ = -boardHalfLength - 0.12 - loop * 0.9 + Math.sin(walk + bubble.seed) * 0.12;
+        localX = Math.sin(walk + bubble.seed) * (boardHalfWidth + 0.34) + Math.sin(time * 3.9 + bubble.seed) * 0.09;
       }
 
       const x = state.position.x + rightX * localX + forwardX * localZ;
@@ -280,10 +291,12 @@ function createBoardContactFoam(): BoardContactFoam {
       const depth = getContactDepth(water.height, boardHeight);
       const pressureBias = bubble.kind === 'rail'
         ? Math.max(0, bubble.side * state.turn) * 0.22
-        : (Math.sign(localZ) > 0 ? lipPower * 0.42 : 0.18);
+        : bubble.kind === 'splash'
+          ? lipPower * 0.36 + overBoard * 0.18
+          : 0.22;
       const contact = Math.min(1, (depth * (0.42 + speedFoam * 0.85) + pressureBias) * airborneFade);
       const pulse = 0.72 + Math.sin(time * 9.5 + bubble.seed) * 0.18 + pseudo(bubble.seed + time * 0.31) * 0.2;
-      const size = bubble.radius * Math.max(0, contact * pulse);
+      const size = bubble.radius * bubble.sizeMultiplier * Math.max(0, contact * pulse);
 
       if (size < 0.006) {
         matrix.compose(position.set(x, water.height, z), rotation, hiddenScale);
@@ -293,9 +306,11 @@ function createBoardContactFoam(): BoardContactFoam {
 
       const orbit = time * (2.6 + bubble.speed * 10) + bubble.seed;
       const bob = Math.sin(orbit) * bubble.lift + Math.sin(orbit * 1.9) * 0.025;
+      const waterLineY = water.height + 0.07 + bob + size * 0.45;
+      const splashY = boardHeight + 0.16 + splashArc + Math.sin(orbit * 1.7) * 0.025;
       position.set(
         x + Math.sin(orbit * 0.73) * 0.035,
-        water.height + 0.07 + bob + size * 0.45,
+        bubble.kind === 'splash' ? Math.max(waterLineY, splashY) : waterLineY,
         z + Math.cos(orbit * 0.61) * 0.035,
       );
       scale.setScalar(size * (0.92 + Math.sin(orbit * 1.23) * 0.18));
@@ -313,6 +328,11 @@ function createBoardContactFoam(): BoardContactFoam {
 
 function wrap01(value: number): number {
   return value - Math.floor(value);
+}
+
+function smoothstep(edge0: number, edge1: number, value: number): number {
+  const t = Math.min(1, Math.max(0, (value - edge0) / (edge1 - edge0)));
+  return t * t * (3 - 2 * t);
 }
 
 type Spray = {
