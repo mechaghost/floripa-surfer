@@ -30,6 +30,7 @@ import { sampleWave } from './game/simulation/waves';
 import { createOcean } from './render/ocean';
 import { createPoseEditorView } from './render/poseEditor';
 import { createSurferModel, getSurferRenderHeading } from './render/surferModel';
+import { getBoardWaterContact } from './render/waterContact';
 import { createWorld } from './render/world';
 import { createHud } from './ui/hud';
 import { createTouchControls } from './ui/touchControls';
@@ -262,8 +263,7 @@ function createBoardContactFoam(): BoardContactFoam {
     const boardPitch = Math.sin(state.pitch);
     const speedFoam = Math.min(1, Math.max(0, (state.speed - 3.2) / 8));
     const centerWater = sampleWave(state.position.x, state.position.z, time);
-    const boardContact = Math.min(1, Math.max(0, (centerWater.height - state.height + 0.18) / 0.2));
-    const liftOffFade = state.verticalVelocity > 0.4 ? 0.25 : 1;
+    const boardContact = getBoardWaterContact(state, centerWater.height);
 
     bubbles.forEach((bubble, index) => {
       const loop = wrap01(bubble.offset + time * bubble.speed + Math.sin(time * 0.45 + bubble.seed) * 0.02);
@@ -301,7 +301,7 @@ function createBoardContactFoam(): BoardContactFoam {
         : bubble.kind === 'splash'
           ? lipPower * 0.1 + overBoard * 0.06
           : 0.07;
-      const contact = Math.min(1, depth * (0.38 + speedFoam * 0.34 + pressureBias) * boardContact * liftOffFade);
+      const contact = Math.min(1, depth * (0.38 + speedFoam * 0.34 + pressureBias) * boardContact);
       const pulse = 0.75 + Math.sin(time * 6.2 + bubble.seed) * 0.06 + pseudo(bubble.seed + time * 0.2) * 0.06;
       const targetSize = bubble.radius * bubble.sizeMultiplier * Math.max(0, contact * pulse);
       bubble.currentScale = dampScalar(bubble.currentScale, targetSize, targetSize > bubble.currentScale ? 7 : 44, dt);
@@ -414,13 +414,15 @@ function createSpray(): Spray {
     const noseZ = state.position.z + forwardZ * halfBoardLength;
     const tailX = state.position.x - forwardX * halfBoardLength;
     const tailZ = state.position.z - forwardZ * halfBoardLength;
-    const noseDepth = getContactDepth(sampleWave(noseX, noseZ, time).height, state.height - pitchRise);
-    const tailDepth = getContactDepth(sampleWave(tailX, tailZ, time).height, state.height + pitchRise);
+    const waterAtBoard = sampleWave(state.position.x, state.position.z, time).height;
+    const boardContact = getBoardWaterContact(state, waterAtBoard);
+    const noseDepth = getContactDepth(sampleWave(noseX, noseZ, time).height, state.height - pitchRise) * boardContact;
+    const tailDepth = getContactDepth(sampleWave(tailX, tailZ, time).height, state.height + pitchRise) * boardContact;
     const intensity = Math.min(1, 0.2 + lipPower * 0.65 + state.speed * 0.025);
     for (const particle of particles) {
       const isTail = particle.emitter === 'tail';
       const contactDepth = isTail ? tailDepth : noseDepth;
-      const emitterIntensity = intensity * Math.min(1, isTail ? 0.55 + contactDepth * 1.7 : contactDepth * 3.2);
+      const emitterIntensity = intensity * Math.min(1, contactDepth * (isTail ? 2.4 : 3.2));
       const cycle = (time * (1.05 + state.speed * 0.05) + particle.phase) % particle.lifetime;
       const age = cycle / particle.lifetime;
       const turbulence = Math.sin(time * 11 + particle.seed) * 0.12 + Math.sin(time * 4.6 + particle.seed * 1.7) * 0.07;
@@ -519,8 +521,7 @@ function createBoardWake(): BoardWake {
 
   function update(state: typeof surferState, lipPower: number, time: number, dt: number): void {
     const waterAtBoard = sampleWave(state.position.x, state.position.z, time).height;
-    const boardClearance = state.height - waterAtBoard;
-    const boardInWater = Math.min(1, Math.max(0, (0.08 - boardClearance) / 0.08));
+    const boardInWater = getBoardWaterContact(state, waterAtBoard);
     const speedWake = Math.min(1, Math.max(0, (state.speed - 1.2) / 4));
     const emitRate = boardInWater > 0.05 ? boardInWater * speedWake * Math.min(52, 12 + state.speed * 1.9 + lipPower * 18) : 0;
     emitCarry += emitRate * dt;

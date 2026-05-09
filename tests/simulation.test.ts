@@ -10,6 +10,7 @@ import {
   getSurferRenderHeading,
   getSurferVisualHeight,
 } from '../src/render/surferModel';
+import { getBoardWaterContact, isBoardAirborne } from '../src/render/waterContact';
 
 describe('surfer simulation', () => {
   it('builds speed and face score when pumping down the wave', () => {
@@ -183,6 +184,28 @@ describe('camera helpers', () => {
     expect(Math.abs(trim.pitch) + Math.abs(trim.bank)).toBeGreaterThan(0.015);
     expect(Math.abs(trim.pitch)).toBeLessThanOrEqual(0.3);
     expect(Math.abs(trim.bank)).toBeLessThanOrEqual(0.24);
+  });
+});
+
+describe('water contact helpers', () => {
+  it('cuts board contact while the surfer is airborne', () => {
+    const state = createInitialSurferState();
+    state.airtime = 0.45;
+    state.verticalVelocity = 2.2;
+    state.height = 0.2;
+
+    expect(isBoardAirborne(state, 0.18)).toBe(true);
+    expect(getBoardWaterContact(state, 0.18)).toBe(0);
+  });
+
+  it('allows full board contact while riding on the water', () => {
+    const state = createInitialSurferState();
+    state.airtime = 0;
+    state.verticalVelocity = 0;
+    state.height = 0.18;
+
+    expect(isBoardAirborne(state, 0.18)).toBe(false);
+    expect(getBoardWaterContact(state, 0.18)).toBeCloseTo(1);
   });
 });
 
