@@ -128,6 +128,8 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
   scene.add(ikRoot);
 
   const ui = createPoseEditorUi(shell);
+  const panelResizeObserver = new ResizeObserver(() => resize());
+  panelResizeObserver.observe(ui.panel);
   let markers: PoseMarker[] = [];
   let ikHandles: IkHandle[] = [];
   let selected: Selection | null = null;
@@ -225,8 +227,15 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
   }
 
   function resize(): void {
-    const width = window.innerWidth;
-    const height = window.innerHeight;
+    const panelRect = ui.panel.getBoundingClientRect();
+    const isMobileLayout = window.matchMedia('(max-width: 720px)').matches;
+    const width = isMobileLayout
+      ? window.innerWidth
+      : Math.max(320, Math.floor(window.innerWidth - panelRect.width - 28));
+    const height = isMobileLayout
+      ? Math.max(180, Math.floor(window.innerHeight - panelRect.height - 20))
+      : window.innerHeight;
+
     renderer.setSize(width, height);
     camera.aspect = width / height;
     camera.updateProjectionMatrix();
@@ -237,6 +246,7 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
     renderer.domElement.removeEventListener('pointerdown', onPointerDown);
     window.removeEventListener('keydown', onKeyDown);
     window.removeEventListener('resize', resize);
+    panelResizeObserver.disconnect();
     orbitControls.dispose();
     transformControls.dispose();
     renderer.dispose();
@@ -977,6 +987,7 @@ function round(value: number): number {
 }
 
 function createPoseEditorUi(shell: HTMLElement): {
+  panel: HTMLElement;
   selected: HTMLElement;
   status: HTMLElement;
   output: HTMLTextAreaElement;
@@ -1036,6 +1047,7 @@ function createPoseEditorUi(shell: HTMLElement): {
   shell.append(panel);
 
   return {
+    panel,
     selected: panel.querySelector('.pose-editor__selected') as HTMLElement,
     status: panel.querySelector('.pose-editor__status') as HTMLElement,
     output: panel.querySelector('.pose-editor__output') as HTMLTextAreaElement,
