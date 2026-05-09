@@ -269,16 +269,18 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
       }
     }
     setIkHandleSelection(null);
+    transformControls.setMode('rotate');
+    updateModeButtons('rotate');
 
     if (!marker) {
       transformControls.detach();
-      ui.selected.textContent = 'No joint';
+      ui.selected.textContent = 'No selection';
       return;
     }
 
     transformControls.attach(marker.bone);
     ui.selected.textContent = marker.bone.name;
-    ui.status.textContent = 'Drag the widget to pose the selected joint.';
+    ui.status.textContent = 'Rotate the selected joint. Use purple IK targets for movement.';
   }
 
   function selectIk(handle: IkHandle | null): void {
@@ -294,7 +296,7 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
 
     if (!handle) {
       transformControls.detach();
-      ui.selected.textContent = 'No joint';
+      ui.selected.textContent = 'No selection';
       return;
     }
 
@@ -302,7 +304,7 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
     updateModeButtons('translate');
     transformControls.attach(handle.target);
     ui.selected.textContent = `IK ${handle.label}`;
-    ui.status.textContent = 'Move the IK handle, then fine-tune with joint rotation if needed.';
+    ui.status.textContent = 'Move the IK target, then solve IK or fine-tune joints with rotation.';
   }
 
   function setIkHandleSelection(handle: IkHandle | null): void {
@@ -316,8 +318,28 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
   }
 
   function setMode(mode: TransformControlsMode): void {
-    transformControls.setMode(mode);
-    updateModeButtons(mode);
+    if (mode === 'translate') {
+      transformControls.setMode('translate');
+      updateModeButtons('translate');
+      if (selected?.type === 'ik') {
+        transformControls.attach(selected.handle.target);
+        ui.status.textContent = 'Move the selected IK target.';
+      } else {
+        transformControls.detach();
+        ui.status.textContent = 'Move is for purple IK targets. Click a target to move it.';
+      }
+      return;
+    }
+
+    transformControls.setMode('rotate');
+    updateModeButtons('rotate');
+    if (selected?.type === 'joint') {
+      transformControls.attach(selected.marker.bone);
+      ui.status.textContent = 'Rotate the selected joint.';
+    } else {
+      transformControls.detach();
+      ui.status.textContent = 'Rotate is for joints. Click a joint marker to rotate it.';
+    }
   }
 
   function updateModeButtons(mode: TransformControlsMode): void {
@@ -981,11 +1003,11 @@ function createPoseEditorUi(shell: HTMLElement): {
     <div class="pose-editor__header">
       <div>
         <div class="pose-editor__eyebrow">Pose Editor</div>
-        <div class="pose-editor__selected">No joint</div>
+        <div class="pose-editor__selected">No selection</div>
       </div>
       <div class="pose-editor__mode">
-        <button class="pose-editor__button pose-editor__button--active" data-action="rotate" type="button">Rotate</button>
-        <button class="pose-editor__button" data-action="translate" type="button">Move</button>
+        <button class="pose-editor__button pose-editor__button--active" data-action="rotate" type="button">Rotate Joint</button>
+        <button class="pose-editor__button" data-action="translate" type="button">Move IK</button>
         <button class="pose-editor__button" data-action="undo" type="button" disabled>Undo</button>
         <button class="pose-editor__button" data-action="redo" type="button" disabled>Redo</button>
       </div>
@@ -997,12 +1019,12 @@ function createPoseEditorUi(shell: HTMLElement): {
     <div class="pose-editor__actions">
       <button class="pose-editor__button" data-action="solve-ik" type="button">Solve IK</button>
       <button class="pose-editor__button" data-action="sync-ik" type="button">Sync IK</button>
-      <button class="pose-editor__button" data-action="reset-selected" type="button">Reset Joint</button>
+      <button class="pose-editor__button" data-action="reset-selected" type="button">Reset Selected</button>
       <button class="pose-editor__button" data-action="reset-all" type="button">Reset All</button>
       <button class="pose-editor__button" data-action="copy" type="button">Copy Poses</button>
       <button class="pose-editor__button pose-editor__button--primary" data-action="save" type="button">Export Poses</button>
     </div>
-    <div class="pose-editor__status">Click a joint marker, then drag the widget.</div>
+    <div class="pose-editor__status">Click a joint to rotate it, or a purple IK target to move it.</div>
   `;
   shell.append(panel);
 
