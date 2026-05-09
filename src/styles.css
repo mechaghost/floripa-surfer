@@ -141,6 +141,11 @@ canvas {
   border-color: rgba(255, 216, 198, 0.56);
 }
 
+.pose-editor__axis-button {
+  width: 32px;
+  padding: 0;
+}
+
 .pose-editor__status {
   min-height: 18px;
   font-size: 0.74rem;

@@ -41,6 +41,8 @@ const BOARD_FIN_PROTRUSION_SCALE = 0.32;
 const FOOT_DECK_SINK = 0.004;
 const BOARD_ASSET_URL = '/assets/models/surfboard-jeremy.glb';
 const HISTORY_LIMIT = 80;
+const KEYBOARD_ROTATION_STEP = 0.035;
+const KEYBOARD_MOVE_STEP = 0.025;
 
 const EDITABLE_BONES = [
   'Body',
@@ -80,6 +82,10 @@ type IkHandle = {
 type Selection =
   | { type: 'joint'; marker: PoseMarker }
   | { type: 'ik'; handle: IkHandle };
+
+type TransformAxis = 'x' | 'y' | 'z';
+
+const TRANSFORM_AXES: TransformAxis[] = ['x', 'y', 'z'];
 
 export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer): void {
   shell.classList.add('game--pose-editor');
@@ -132,6 +138,8 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
   let markers: PoseMarker[] = [];
   let ikHandles: IkHandle[] = [];
   let selected: Selection | null = null;
+  let editorMode: TransformControlsMode = 'rotate';
+  let activeAxis: TransformAxis = 'x';
   let skinnedMesh: SkinnedMesh | null = null;
   let riderRoot: Object3D | null = null;
   let poseLibrary = loadPoseLibrary();
@@ -167,6 +175,9 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
   renderer.domElement.addEventListener('pointerdown', onPointerDown);
   ui.rotateButton.addEventListener('click', () => setMode('rotate'));
   ui.translateButton.addEventListener('click', () => setMode('translate'));
+  for (const axis of TRANSFORM_AXES) {
+    ui.axisButtons[axis].addEventListener('click', () => setActiveAxis(axis));
+  }
   ui.undoButton.addEventListener('click', undoPoseEdit);
   ui.redoButton.addEventListener('click', redoPoseEdit);
   ui.solveIkButton.addEventListener('click', () => {
@@ -208,6 +219,7 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
   window.addEventListener('resize', resize);
   window.addEventListener('pagehide', dispose);
 
+  updateAxisButtons();
   resize();
   renderer.setAnimationLoop(render);
 
@@ -281,6 +293,7 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
     }
     setIkHandleSelection(null);
     transformControls.setMode('rotate');
+    editorMode = 'rotate';
     updateModeButtons('rotate');
 
     if (!marker) {
@@ -312,6 +325,7 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
     }
 
     transformControls.setMode('translate');
+    editorMode = 'translate';
     updateModeButtons('translate');
     transformControls.attach(handle.target);
     ui.selected.textContent = `IK ${handle.label}`;
@@ -331,6 +345,7 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
   function setMode(mode: TransformControlsMode): void {
     if (mode === 'translate') {
       transformControls.setMode('translate');
+      editorMode = 'translate';
       updateModeButtons('translate');
       if (selected?.type === 'ik') {
         transformControls.attach(selected.handle.target);
@@ -343,6 +358,7 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
     }
 
     transformControls.setMode('rotate');
+    editorMode = 'rotate';
     updateModeButtons('rotate');
     if (selected?.type === 'joint') {
       transformControls.attach(selected.marker.bone);
@@ -356,6 +372,18 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
   function updateModeButtons(mode: TransformControlsMode): void {
     ui.rotateButton.classList.toggle('pose-editor__button--active', mode === 'rotate');
     ui.translateButton.classList.toggle('pose-editor__button--active', mode === 'translate');
+  }
+
+  function setActiveAxis(axis: TransformAxis): void {
+    activeAxis = axis;
+    updateAxisButtons();
+    ui.status.textContent = `Axis ${axis.toUpperCase()} selected. Use arrow keys to nudge.`;
+  }
+
+  function updateAxisButtons(): void {
+    for (const axis of TRANSFORM_AXES) {
+      ui.axisButtons[axis].classList.toggle('pose-editor__button--active', axis === activeAxis);
+    }
   }
 
   function resetSelected(): void {
@@ -628,9 +656,52 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
     ui.redoButton.disabled = redoStack.length === 0;
   }
 
+  function nudgeSelected(event: KeyboardEvent): void {
+    const sign = event.key === 'ArrowUp' || event.key === 'ArrowRight' ? 1 : -1;
+    const multiplier = event.shiftKey ? 4 : event.altKey ? 0.25 : 1;
+    const before = captureCurrentPose();
+
+    if (editorMode === 'rotate') {
+      if (selected?.type !== 'joint') {
+        ui.status.textContent = 'Rotate nudges need a selected joint.';
+        return;
+      }
+
+      const amount = sign * KEYBOARD_ROTATION_STEP * multiplier;
+      selected.marker.bone.rotation[activeAxis] += amount;
+      selected.marker.bone.updateMatrixWorld(true);
+      updateMarkers(markers);
+      commitHistorySnapshot(before);
+      updateOutput();
+      ui.status.textContent = `Rotated ${selected.marker.bone.name} on ${activeAxis.toUpperCase()}.`;
+      return;
+    }
+
+    if (selected?.type !== 'ik') {
+      ui.status.textContent = 'Move nudges need a selected purple IK target.';
+      return;
+    }
+
+    const amount = sign * KEYBOARD_MOVE_STEP * multiplier;
+    selected.handle.target.position[activeAxis] += amount;
+    solveIk();
+    commitHistorySnapshot(before);
+    updateOutput();
+    ui.status.textContent = `Moved IK ${selected.handle.label} on ${activeAxis.toUpperCase()}.`;
+  }
+
   function onKeyDown(event: KeyboardEvent): void {
+    if (event.key === 'Escape' && !ui.loadBaseModal.hidden) {
+      event.preventDefault();
+      closeLoadBaseModal();
+      return;
+    }
+
     const target = event.target;
     if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) {
+      return;
+    }
+    if (!ui.loadBaseModal.hidden) {
       return;
     }
 
@@ -643,9 +714,18 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
     } else if (isUndoKey) {
       event.preventDefault();
       undoPoseEdit();
-    } else if (event.key === 'Escape' && !ui.loadBaseModal.hidden) {
+    } else if (!event.metaKey && !event.ctrlKey && !event.altKey && event.key.toLowerCase() === 'r') {
       event.preventDefault();
-      closeLoadBaseModal();
+      setMode('rotate');
+    } else if (!event.metaKey && !event.ctrlKey && !event.altKey && event.key.toLowerCase() === 'm') {
+      event.preventDefault();
+      setMode('translate');
+    } else if (!event.metaKey && !event.ctrlKey && !event.altKey && ['1', '2', '3'].includes(event.key)) {
+      event.preventDefault();
+      setActiveAxis(TRANSFORM_AXES[Number(event.key) - 1]);
+    } else if (event.key.startsWith('Arrow')) {
+      event.preventDefault();
+      nudgeSelected(event);
     }
   }
 }
@@ -1090,6 +1170,7 @@ function createPoseEditorUi(shell: HTMLElement): {
   stateSelect: HTMLSelectElement;
   loadBaseModal: HTMLElement;
   loadBaseSelect: HTMLSelectElement;
+  axisButtons: Record<TransformAxis, HTMLButtonElement>;
   rotateButton: HTMLButtonElement;
   translateButton: HTMLButtonElement;
   undoButton: HTMLButtonElement;
@@ -1117,6 +1198,9 @@ function createPoseEditorUi(shell: HTMLElement): {
       <div class="pose-editor__mode">
         <button class="pose-editor__button pose-editor__button--active" data-action="rotate" type="button">Rotate Joint</button>
         <button class="pose-editor__button" data-action="translate" type="button">Move IK</button>
+        <button class="pose-editor__button pose-editor__button--active pose-editor__axis-button" data-axis="x" type="button">X</button>
+        <button class="pose-editor__button pose-editor__axis-button" data-axis="y" type="button">Y</button>
+        <button class="pose-editor__button pose-editor__axis-button" data-axis="z" type="button">Z</button>
         <button class="pose-editor__button" data-action="undo" type="button" disabled>Undo</button>
         <button class="pose-editor__button" data-action="redo" type="button" disabled>Redo</button>
       </div>
@@ -1165,6 +1249,11 @@ function createPoseEditorUi(shell: HTMLElement): {
     stateSelect: panel.querySelector('[data-role="state-select"]') as HTMLSelectElement,
     loadBaseModal,
     loadBaseSelect: loadBaseModal.querySelector('[data-role="load-base-select"]') as HTMLSelectElement,
+    axisButtons: {
+      x: panel.querySelector('[data-axis="x"]') as HTMLButtonElement,
+      y: panel.querySelector('[data-axis="y"]') as HTMLButtonElement,
+      z: panel.querySelector('[data-axis="z"]') as HTMLButtonElement,
+    },
     rotateButton: panel.querySelector('[data-action="rotate"]') as HTMLButtonElement,
     translateButton: panel.querySelector('[data-action="translate"]') as HTMLButtonElement,
     undoButton: panel.querySelector('[data-action="undo"]') as HTMLButtonElement,
