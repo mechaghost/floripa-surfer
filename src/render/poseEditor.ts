@@ -43,6 +43,17 @@ const BOARD_ASSET_URL = '/assets/models/surfboard-jeremy.glb';
 const HISTORY_LIMIT = 80;
 const KEYBOARD_ROTATION_STEP = 0.035;
 const KEYBOARD_MOVE_STEP = 0.025;
+const DEFAULT_JOINT_LIMIT = new Vector3(1.05, 1.05, 1.05);
+const IK_JOINT_LIMITS: Record<string, Vector3> = {
+  UpperArmL: new Vector3(1.55, 1.25, 1.35),
+  UpperArmR: new Vector3(1.55, 1.25, 1.35),
+  LowerArmL: new Vector3(1.45, 0.42, 0.42),
+  LowerArmR: new Vector3(1.45, 0.42, 0.42),
+  UpperLegL: new Vector3(1.25, 0.85, 0.95),
+  UpperLegR: new Vector3(1.25, 0.85, 0.95),
+  LowerLegL: new Vector3(1.65, 0.34, 0.34),
+  LowerLegR: new Vector3(1.65, 0.34, 0.34),
+};
 
 const EDITABLE_BONES = [
   'Body',
@@ -437,21 +448,42 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
       return;
     }
 
-    const iks = ikHandles.map((handle): IK => ({
-      target: ensureSkeletonIndex(skinnedMesh as SkinnedMesh, handle.target),
-      effector: ensureSkeletonIndex(skinnedMesh as SkinnedMesh, handle.effector),
-      links: handle.links.map((link) => ({
-        index: ensureSkeletonIndex(skinnedMesh as SkinnedMesh, link),
-      })),
-      iteration: 18,
-      blendFactor: 1,
-    }));
+    const iks = ikHandles.map((handle): IK => {
+      const mesh = skinnedMesh as SkinnedMesh;
+      return {
+        target: ensureSkeletonIndex(mesh, handle.target),
+        effector: ensureSkeletonIndex(mesh, handle.effector),
+        links: handle.links.map((link) => createLimitedIkLink(mesh, link)),
+        iteration: 18,
+        blendFactor: 1,
+      };
+    });
 
     new CCDIKSolver(skinnedMesh, iks).update();
     updateDrivenBonesFromTargets(ikHandles);
     updateMarkers(markers);
     ui.status.textContent = 'IK solved. Save or export the pose when it looks right.';
     updateOutput();
+  }
+
+  function createLimitedIkLink(mesh: SkinnedMesh, link: Object3D): IK['links'][number] {
+    const base = basePose.get(link);
+    const limit = IK_JOINT_LIMITS[link.name] ?? DEFAULT_JOINT_LIMIT;
+    const center = base?.rotation ?? [link.rotation.x, link.rotation.y, link.rotation.z];
+
+    return {
+      index: ensureSkeletonIndex(mesh, link),
+      rotationMin: new Vector3(
+        center[0] - limit.x,
+        center[1] - limit.y,
+        center[2] - limit.z,
+      ),
+      rotationMax: new Vector3(
+        center[0] + limit.x,
+        center[1] + limit.y,
+        center[2] + limit.z,
+      ),
+    };
   }
 
   function updateDrivenBonesFromTargets(handles: IkHandle[]): void {
