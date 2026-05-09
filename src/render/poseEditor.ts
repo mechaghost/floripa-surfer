@@ -77,6 +77,7 @@ type IkHandle = {
   target: Mesh;
   effector: Object3D;
   links: Object3D[];
+  drivenBone?: Object3D;
 };
 
 type Selection =
@@ -442,15 +443,28 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
       links: handle.links.map((link) => ({
         index: ensureSkeletonIndex(skinnedMesh as SkinnedMesh, link),
       })),
-      iteration: 10,
-      maxAngle: 0.18,
+      iteration: 18,
       blendFactor: 1,
     }));
 
     new CCDIKSolver(skinnedMesh, iks).update();
+    updateDrivenBonesFromTargets(ikHandles);
     updateMarkers(markers);
     ui.status.textContent = 'IK solved. Save or export the pose when it looks right.';
     updateOutput();
+  }
+
+  function updateDrivenBonesFromTargets(handles: IkHandle[]): void {
+    const worldTarget = new Vector3();
+    for (const handle of handles) {
+      if (!handle.drivenBone) {
+        continue;
+      }
+
+      handle.target.updateMatrixWorld(true);
+      handle.target.getWorldPosition(worldTarget);
+      setObjectWorldPosition(handle.drivenBone, worldTarget);
+    }
   }
 
   function syncIkTargets(): void {
@@ -461,8 +475,9 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
   }
 
   function syncIkTarget(handle: IkHandle): void {
-    handle.effector.updateMatrixWorld(true);
-    handle.effector.getWorldPosition(handle.target.position);
+    const syncSource = handle.drivenBone ?? handle.effector;
+    syncSource.updateMatrixWorld(true);
+    syncSource.getWorldPosition(handle.target.position);
   }
 
   function savePose(): void {
@@ -946,8 +961,8 @@ function createIkHandles(rider: Object3D, ikRoot: Group): IkHandle[] {
   const specs = [
     { label: 'Left Hand', effector: 'PalmL', links: ['LowerArmL', 'UpperArmL'] },
     { label: 'Right Hand', effector: 'PalmR', links: ['LowerArmR', 'UpperArmR'] },
-    { label: 'Left Ankle', effector: 'LowerLegL_end', links: ['LowerLegL', 'UpperLegL'] },
-    { label: 'Right Ankle', effector: 'LowerLegR_end', links: ['LowerLegR', 'UpperLegR'] },
+    { label: 'Left Foot', effector: 'LowerLegL_end', links: ['LowerLegL', 'UpperLegL'], drivenBone: 'FootL' },
+    { label: 'Right Foot', effector: 'LowerLegR_end', links: ['LowerLegR', 'UpperLegR'], drivenBone: 'FootR' },
   ];
 
   const targetGeometry = new SphereGeometry(0.055, 16, 10);
@@ -955,6 +970,7 @@ function createIkHandles(rider: Object3D, ikRoot: Group): IkHandle[] {
   for (const spec of specs) {
     const effector = bones.get(spec.effector);
     const links = spec.links.map((name) => bones.get(name));
+    const drivenBone = spec.drivenBone ? bones.get(spec.drivenBone) : undefined;
     if (!effector || links.some((link) => !link)) {
       continue;
     }
@@ -968,18 +984,32 @@ function createIkHandles(rider: Object3D, ikRoot: Group): IkHandle[] {
     target.name = `IK_${spec.label.replace(/\s+/g, '')}`;
     target.renderOrder = 12;
     target.userData.ikLabel = spec.label;
-    effector.updateMatrixWorld(true);
-    effector.getWorldPosition(target.position);
     ikRoot.add(target);
-    handles.push({
+    const handle: IkHandle = {
       label: spec.label,
       target,
       effector,
       links: links as Object3D[],
-    });
+      drivenBone,
+    };
+    syncIkTargetToSource(handle);
+    handles.push(handle);
   }
 
   return handles;
+}
+
+function syncIkTargetToSource(handle: IkHandle): void {
+  const source = handle.drivenBone ?? handle.effector;
+  source.updateMatrixWorld(true);
+  source.getWorldPosition(handle.target.position);
+}
+
+function setObjectWorldPosition(object: Object3D, worldPosition: Vector3): void {
+  const localPosition = worldPosition.clone();
+  object.parent?.worldToLocal(localPosition);
+  object.position.copy(localPosition);
+  object.updateMatrixWorld(true);
 }
 
 function findFirstSkinnedMesh(model: Object3D): SkinnedMesh | null {
@@ -1117,13 +1147,22 @@ function applySavedPose(pose: SavedPose, markers: PoseMarker[], ikHandles: IkHan
   }
 
   for (const handle of ikHandles) {
-    const saved = pose.ikTargets?.[handle.label];
+    const saved = pose.ikTargets?.[handle.label] ?? getLegacyIkTarget(pose, handle.label);
     if (!saved) {
       continue;
     }
 
     handle.target.position.set(saved[0], saved[1], saved[2]);
   }
+}
+
+function getLegacyIkTarget(pose: SavedPose, label: string): [number, number, number] | undefined {
+  const legacyLabels: Record<string, string> = {
+    'Left Foot': 'Left Ankle',
+    'Right Foot': 'Right Ankle',
+  };
+  const legacyLabel = legacyLabels[label];
+  return legacyLabel ? pose.ikTargets?.[legacyLabel] : undefined;
 }
 
 function poseSignature(pose: SavedPose): string {
