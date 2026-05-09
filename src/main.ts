@@ -1,12 +1,15 @@
 import {
+  AdditiveBlending,
   AmbientLight,
   Clock,
   Color,
   DirectionalLight,
+  DoubleSide,
   Group,
   Mesh,
   MeshBasicMaterial,
   OrthographicCamera,
+  PCFSoftShadowMap,
   PlaneGeometry,
   PerspectiveCamera,
   Scene,
@@ -20,6 +23,7 @@ import type { SurferState } from './game/simulation/surfer';
 import { createInitialSurferState, updateSurfer } from './game/simulation/surfer';
 import { sampleWave } from './game/simulation/waves';
 import { createOcean } from './render/ocean';
+import { createPoseEditorView } from './render/poseEditor';
 import { createSurferModel, getSurferRenderHeading } from './render/surferModel';
 import { createWorld } from './render/world';
 import { createHud } from './ui/hud';
@@ -57,10 +61,15 @@ const renderer = new WebGLRenderer({
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.6));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = PCFSoftShadowMap;
 shell.append(renderer.domElement);
 
-if (new URLSearchParams(window.location.search).get('view') === 'surfer-test') {
+const view = new URLSearchParams(window.location.search).get('view');
+
+if (view === 'surfer-test') {
   createSurferVerificationView(shell, renderer);
+} else if (view === 'pose-editor') {
+  createPoseEditorView(shell, renderer);
 } else {
   createGame(shell, renderer);
 }
@@ -70,6 +79,7 @@ const { scene, camera, updateCamera } = createWorld();
 const ocean = createOcean();
 const surfer = createSurferModel();
 const spray = createSpray();
+const wake = createBoardWake();
 const waterCues = createWaterMotionCues();
 const input = createInputState();
 const hud = createHud();
@@ -79,7 +89,7 @@ const clock = new Clock();
 let surferState = createInitialSurferState();
 let elapsed = 0;
 
-scene.add(ocean.mesh, surfer.root, spray.root, waterCues.root);
+scene.add(ocean.mesh, wake.root, surfer.root, spray.root, waterCues.root);
 shell.append(hud.root, touchControls.root);
 
 window.addEventListener('resize', resize);
@@ -97,6 +107,7 @@ function tick(): void {
 
   ocean.update(elapsed, surferState.position);
   surfer.update(surferState, elapsed);
+  wake.update(surferState, currentWave.lipPower, elapsed, dt);
   spray.update(surferState, currentWave.lipPower, elapsed);
   waterCues.update(surferState, elapsed);
   updateCamera(surferState, dt);
@@ -266,6 +277,108 @@ function createSpray(): Spray {
         Math.max(0.027, fleckSize * foamStretch),
       );
       particle.mesh.material.opacity = Math.max(0, emitterIntensity * (0.68 - age * 0.62));
+    }
+  }
+
+  return { root, update };
+}
+
+type BoardWake = {
+  root: Group;
+  update: (state: typeof surferState, lipPower: number, time: number, dt: number) => void;
+};
+
+function createBoardWake(): BoardWake {
+  const root = new Group();
+  const material = new MeshBasicMaterial({
+    color: new Color('#e8fbff'),
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    side: DoubleSide,
+    blending: AdditiveBlending,
+  });
+  const geometry = new PlaneGeometry(1.2, 0.22);
+  const wakes = Array.from({ length: 82 }, (_, index) => {
+    const mesh = new Mesh(geometry, material.clone());
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.renderOrder = 3;
+    root.add(mesh);
+    return {
+      mesh,
+      age: 999,
+      lifetime: 1.15 + pseudo(index * 4.33) * 0.82,
+      seed: index * 15.77 + 2.4,
+      side: index % 2 === 0 ? -1 : 1,
+      drift: 0,
+      stretch: 1,
+      heading: 0,
+    };
+  });
+  let cursor = 0;
+  let emitCarry = 0;
+
+  function spawnWake(state: typeof surferState, lipPower: number, time: number): void {
+    const wake = wakes[cursor];
+    cursor = (cursor + 1) % wakes.length;
+
+    const forwardX = Math.sin(state.heading);
+    const forwardZ = -Math.cos(state.heading);
+    const rightX = Math.cos(state.heading);
+    const rightZ = Math.sin(state.heading);
+    const side = wake.side;
+    const sideSpread = side * (0.22 + pseudo(wake.seed + time) * 0.42);
+    const tailOffset = 1.34 + pseudo(wake.seed + 3.1) * 0.46;
+    const stagger = pseudo(wake.seed + time * 0.17) * 0.44;
+    const x = state.position.x - forwardX * (tailOffset + stagger) + rightX * sideSpread;
+    const z = state.position.z - forwardZ * (tailOffset + stagger) + rightZ * sideSpread;
+    const water = sampleWave(x, z, time);
+
+    wake.age = 0;
+    wake.lifetime = 0.84 + pseudo(wake.seed + time * 0.4) * 0.82 + lipPower * 0.32;
+    wake.drift = side * (0.2 + pseudo(wake.seed + 5.5) * 0.55);
+    wake.stretch = 0.78 + state.speed * 0.055 + lipPower * 0.42 + pseudo(wake.seed + 6.4) * 0.38;
+    wake.heading = getSurferRenderHeading(state.heading) + side * (0.06 + pseudo(wake.seed + 7.3) * 0.12);
+    wake.mesh.position.set(x, water.height + 0.042, z);
+    wake.mesh.rotation.z = wake.heading;
+  }
+
+  function update(state: typeof surferState, lipPower: number, time: number, dt: number): void {
+    const waterAtBoard = sampleWave(state.position.x, state.position.z, time).height;
+    const boardClearance = state.height - waterAtBoard;
+    const boardInWater = Math.min(1, Math.max(0, (0.08 - boardClearance) / 0.08));
+    const speedWake = Math.min(1, Math.max(0, (state.speed - 1.2) / 4));
+    const emitRate = boardInWater > 0.05 ? boardInWater * speedWake * Math.min(52, 12 + state.speed * 1.9 + lipPower * 18) : 0;
+    emitCarry += emitRate * dt;
+    if (emitRate === 0) {
+      emitCarry = 0;
+    }
+    while (emitCarry >= 1) {
+      spawnWake(state, lipPower, time);
+      emitCarry -= 1;
+    }
+
+    for (const wake of wakes) {
+      wake.age += dt;
+      const life = Math.min(1, wake.age / wake.lifetime);
+      if (life >= 1) {
+        wake.mesh.material.opacity = 0;
+        continue;
+      }
+
+      const fade = Math.pow(1 - life, 1.65);
+      const ripple = Math.sin(time * 10.5 + wake.seed) * 0.035;
+      const water = sampleWave(wake.mesh.position.x, wake.mesh.position.z, time);
+      wake.mesh.position.y = water.height + 0.045 + ripple;
+      wake.mesh.position.x += Math.cos(wake.heading) * wake.drift * dt * (0.28 + life);
+      wake.mesh.position.z += Math.sin(wake.heading) * wake.drift * dt * (0.28 + life);
+      wake.mesh.rotation.z = wake.heading + Math.sin(time * 2.8 + wake.seed) * 0.06 * life;
+      wake.mesh.scale.set(
+        wake.stretch * (0.55 + life * 2.15),
+        0.5 + life * 1.55,
+        1,
+      );
+      wake.mesh.material.opacity = Math.min(0.62, fade * (0.34 + lipPower * 0.22));
     }
   }
 

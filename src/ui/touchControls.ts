@@ -9,38 +9,49 @@ export type TouchControls = {
 export function createTouchControls(input: InputState): TouchControls {
   const root = document.createElement('div');
   root.className = 'touch';
+  root.setAttribute('aria-label', 'Surf controls. Drag to carve, tap to jump.');
   root.innerHTML = `
     <div class="touch__pad" data-pad aria-label="Surf control pad" role="application">
       <div class="touch__ring"></div>
       <div class="touch__knob" data-knob></div>
     </div>
-    <div class="touch__tricks" aria-label="Jump action">
-      <button class="touch__button touch__button--primary" type="button" data-jump aria-label="Jump">↑</button>
-    </div>
+    <div class="touch__tap" data-tap></div>
   `;
 
   const pad = root.querySelector<HTMLElement>('[data-pad]');
   const knob = root.querySelector<HTMLElement>('[data-knob]');
-  const jumpButton = root.querySelector<HTMLButtonElement>('[data-jump]');
+  const tapFlash = root.querySelector<HTMLElement>('[data-tap]');
   const disposers: Array<() => void> = [];
-  let padPointer: number | null = null;
+  const dragThreshold = 9;
+  const stickRadius = 76;
+  let activePointer: number | null = null;
+  let originX = 0;
+  let originY = 0;
+  let lastX = 0;
+  let lastY = 0;
+  let isDragging = false;
+  let jumpTimer: number | null = null;
 
-  if (!pad || !knob || !jumpButton) {
+  if (!pad || !knob || !tapFlash) {
     throw new Error('Touch controls failed to initialize');
   }
 
   const movePad = (clientX: number, clientY: number) => {
-    const rect = pad.getBoundingClientRect();
-    const radius = rect.width * 0.5;
-    const x = clamp((clientX - rect.left - radius) / radius, -1, 1);
-    const y = clamp((clientY - rect.top - radius) / radius, -1, 1);
+    const x = clamp((clientX - originX) / stickRadius, -1, 1);
+    const y = clamp((clientY - originY) / stickRadius, -1, 1);
     const magnitude = Math.min(1, Math.hypot(x, y));
     const angle = Math.atan2(y, x);
     const nx = Math.cos(angle) * magnitude;
     const ny = Math.sin(angle) * magnitude;
 
     applyPadInput(input, nx, ny);
-    knob.style.transform = `translate(${nx * 42}px, ${ny * 42}px)`;
+    knob.style.transform = `translate(${nx * 48}px, ${ny * 48}px)`;
+  };
+
+  const showPad = () => {
+    pad.style.left = `${originX}px`;
+    pad.style.top = `${originY}px`;
+    pad.classList.add('touch__pad--active');
   };
 
   const clearPad = () => {
@@ -49,59 +60,96 @@ export function createTouchControls(input: InputState): TouchControls {
     input.forward = 0;
     input.back = 0;
     knob.style.transform = 'translate(0, 0)';
-    padPointer = null;
+    pad.classList.remove('touch__pad--active');
+    activePointer = null;
+    isDragging = false;
   };
 
-  const onPadDown = (event: PointerEvent) => {
-    padPointer = event.pointerId;
-    capturePointer(pad, event.pointerId);
-    movePad(event.clientX, event.clientY);
-  };
-  const onPadMove = (event: PointerEvent) => {
-    if (event.pointerId === padPointer) {
-      movePad(event.clientX, event.clientY);
-    }
-  };
-  const onPadUp = (event: PointerEvent) => {
-    if (event.pointerId === padPointer) {
-      clearPad();
-    }
-  };
-
-  pad.addEventListener('pointerdown', onPadDown);
-  pad.addEventListener('pointermove', onPadMove);
-  pad.addEventListener('pointerup', onPadUp);
-  pad.addEventListener('pointercancel', onPadUp);
-  disposers.push(() => {
-    pad.removeEventListener('pointerdown', onPadDown);
-    pad.removeEventListener('pointermove', onPadMove);
-    pad.removeEventListener('pointerup', onPadUp);
-    pad.removeEventListener('pointercancel', onPadUp);
-  });
-
-  const setJump = (active: boolean) => {
-    input.trick = active;
+  const triggerJump = (clientX: number, clientY: number) => {
+    input.trick = true;
     input.trickUp = false;
     input.trickDown = false;
     input.trickLeft = false;
     input.trickRight = false;
-    jumpButton.classList.toggle('touch__button--active', active);
-  };
-  const onJumpDown = (event: PointerEvent) => {
-    capturePointer(jumpButton, event.pointerId);
-    setJump(true);
-  };
-  const onJumpUp = () => setJump(false);
+    tapFlash.style.left = `${clientX}px`;
+    tapFlash.style.top = `${clientY}px`;
+    tapFlash.classList.remove('touch__tap--active');
+    tapFlash.offsetWidth;
+    tapFlash.classList.add('touch__tap--active');
 
-  jumpButton.addEventListener('pointerdown', onJumpDown);
-  jumpButton.addEventListener('pointerup', onJumpUp);
-  jumpButton.addEventListener('pointercancel', onJumpUp);
-  jumpButton.addEventListener('lostpointercapture', onJumpUp);
+    if (jumpTimer !== null) {
+      window.clearTimeout(jumpTimer);
+    }
+    jumpTimer = window.setTimeout(() => {
+      input.trick = false;
+      jumpTimer = null;
+    }, 150);
+  };
+
+  const onPointerDown = (event: PointerEvent) => {
+    if (activePointer !== null) {
+      return;
+    }
+
+    activePointer = event.pointerId;
+    originX = event.clientX;
+    originY = event.clientY;
+    lastX = event.clientX;
+    lastY = event.clientY;
+    isDragging = false;
+    capturePointer(root, event.pointerId);
+  };
+
+  const onPointerMove = (event: PointerEvent) => {
+    if (event.pointerId !== activePointer) {
+      return;
+    }
+
+    lastX = event.clientX;
+    lastY = event.clientY;
+    const distance = Math.hypot(lastX - originX, lastY - originY);
+    if (!isDragging && distance >= dragThreshold) {
+      isDragging = true;
+      showPad();
+    }
+
+    if (isDragging) {
+      movePad(lastX, lastY);
+    }
+  };
+
+  const onPointerUp = (event: PointerEvent) => {
+    if (event.pointerId !== activePointer) {
+      return;
+    }
+
+    const distance = Math.hypot(lastX - originX, lastY - originY);
+    if (!isDragging && distance < dragThreshold) {
+      triggerJump(event.clientX, event.clientY);
+    }
+    clearPad();
+  };
+
+  const onPointerCancel = (event: PointerEvent) => {
+    if (event.pointerId === activePointer) {
+      clearPad();
+    }
+  };
+
+  root.addEventListener('pointerdown', onPointerDown);
+  root.addEventListener('pointermove', onPointerMove);
+  root.addEventListener('pointerup', onPointerUp);
+  root.addEventListener('pointercancel', onPointerCancel);
+  root.addEventListener('lostpointercapture', onPointerCancel);
   disposers.push(() => {
-    jumpButton.removeEventListener('pointerdown', onJumpDown);
-    jumpButton.removeEventListener('pointerup', onJumpUp);
-    jumpButton.removeEventListener('pointercancel', onJumpUp);
-    jumpButton.removeEventListener('lostpointercapture', onJumpUp);
+    root.removeEventListener('pointerdown', onPointerDown);
+    root.removeEventListener('pointermove', onPointerMove);
+    root.removeEventListener('pointerup', onPointerUp);
+    root.removeEventListener('pointercancel', onPointerCancel);
+    root.removeEventListener('lostpointercapture', onPointerCancel);
+    if (jumpTimer !== null) {
+      window.clearTimeout(jumpTimer);
+    }
   });
 
   return {

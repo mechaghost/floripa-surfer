@@ -45,6 +45,141 @@ canvas {
   background: #b7eef4;
 }
 
+.game--pose-editor {
+  background: #b7eef4;
+}
+
+.pose-editor {
+  position: absolute;
+  top: max(14px, env(safe-area-inset-top));
+  right: max(14px, env(safe-area-inset-right));
+  z-index: 5;
+  width: min(360px, calc(100vw - 28px));
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: rgba(6, 44, 54, 0.72);
+  color: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 16px 40px rgba(2, 31, 38, 0.22);
+}
+
+.pose-editor__header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: start;
+}
+
+.pose-editor__eyebrow {
+  margin-bottom: 3px;
+  font-size: 0.68rem;
+  font-weight: 850;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(210, 250, 255, 0.72);
+}
+
+.pose-editor__selected {
+  min-height: 22px;
+  font-size: 1.02rem;
+  font-weight: 850;
+}
+
+.pose-editor__mode,
+.pose-editor__state,
+.pose-editor__actions {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.pose-editor__state {
+  display: grid;
+  grid-template-columns: minmax(84px, 0.8fr) minmax(110px, 1fr) auto auto;
+  align-items: center;
+}
+
+.pose-editor__select,
+.pose-editor__input {
+  min-width: 0;
+  min-height: 32px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  background: rgba(0, 18, 24, 0.34);
+  color: rgba(255, 255, 255, 0.92);
+  padding: 0 9px;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 760;
+}
+
+.pose-editor__button {
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.9);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.pose-editor__button:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
+.pose-editor__button--active {
+  background: rgba(255, 239, 92, 0.22);
+  border-color: rgba(255, 239, 92, 0.7);
+  color: #fff7bd;
+}
+
+.pose-editor__button--primary {
+  background: rgba(238, 118, 81, 0.82);
+  border-color: rgba(255, 216, 198, 0.56);
+}
+
+.pose-editor__status {
+  min-height: 18px;
+  font-size: 0.74rem;
+  line-height: 1.25;
+  color: rgba(223, 250, 255, 0.78);
+}
+
+.pose-editor__output {
+  width: 100%;
+  height: 176px;
+  resize: vertical;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(0, 18, 24, 0.42);
+  color: rgba(244, 255, 255, 0.9);
+  padding: 8px;
+  font: 0.68rem/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+@media (max-width: 720px) {
+  .pose-editor {
+    top: auto;
+    left: max(10px, env(safe-area-inset-left));
+    right: max(10px, env(safe-area-inset-right));
+    bottom: max(10px, env(safe-area-inset-bottom));
+    width: auto;
+    max-height: 46vh;
+    overflow: auto;
+  }
+
+  .pose-editor__output {
+    height: 104px;
+  }
+
+  .pose-editor__state {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
 .verify-labels {
   position: absolute;
   inset: 0;
@@ -123,30 +258,32 @@ canvas {
 .touch {
   position: absolute;
   inset: 0;
-  pointer-events: none;
+  pointer-events: auto;
   z-index: 3;
-  padding: max(18px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(18px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
-  display: flex;
-  align-items: end;
-  justify-content: space-between;
-  gap: 18px;
+  touch-action: none;
   user-select: none;
   -webkit-user-select: none;
   -webkit-tap-highlight-color: transparent;
 }
 
-.touch__pad,
-.touch__button {
-  pointer-events: auto;
-  touch-action: none;
-}
-
 .touch__pad {
-  position: relative;
+  position: absolute;
+  left: 50%;
+  top: 50%;
   width: clamp(128px, 28vw, 184px);
   aspect-ratio: 1;
   display: grid;
   place-items: center;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, -50%) scale(0.84);
+  transition: opacity 100ms ease, transform 120ms ease;
+  will-change: left, top, transform, opacity;
+}
+
+.touch__pad--active {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
 }
 
 .touch__ring {
@@ -171,36 +308,22 @@ canvas {
   will-change: transform;
 }
 
-.touch__tricks {
-  width: clamp(92px, 20vw, 132px);
+.touch__tap {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 72px;
   aspect-ratio: 1;
-  display: grid;
-  place-items: center;
-}
-
-.touch__button {
-  appearance: none;
-  width: clamp(64px, 13vw, 84px);
-  aspect-ratio: 1;
-  border: 1px solid rgba(255, 255, 255, 0.34);
   border-radius: 50%;
-  color: #ffffff;
-  background: rgba(3, 45, 55, 0.34);
-  backdrop-filter: blur(12px);
-  box-shadow: 0 10px 26px rgba(2, 31, 38, 0.18);
-  font: 900 clamp(1.25rem, 3vw, 1.9rem) / 1 Inter, system-ui, sans-serif;
-  display: grid;
-  place-items: center;
+  border: 2px solid rgba(255, 255, 255, 0.52);
+  background: radial-gradient(circle, rgba(255, 240, 107, 0.48), rgba(85, 243, 193, 0.2) 44%, rgba(255, 255, 255, 0) 70%);
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, -50%) scale(0.4);
 }
 
-.touch__button--primary {
-  color: #092933;
-  background: linear-gradient(160deg, #fff06b, #55f3c1);
-}
-
-.touch__button--active {
-  transform: translateY(2px) scale(0.94);
-  filter: brightness(1.12);
+.touch__tap--active {
+  animation: tap-jump-pulse 260ms ease-out both;
 }
 
 @media (max-width: 720px) {
@@ -225,13 +348,22 @@ canvas {
     font-size: 3.9rem;
   }
 
-  .touch {
-    padding: 12px max(12px, env(safe-area-inset-right)) max(14px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
-  }
 }
 
 @media (pointer: fine) and (min-width: 900px) {
   .touch {
     opacity: 0.58;
+  }
+}
+
+@keyframes tap-jump-pulse {
+  0% {
+    opacity: 0.78;
+    transform: translate(-50%, -50%) scale(0.4);
+  }
+
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(1.85);
   }
 }

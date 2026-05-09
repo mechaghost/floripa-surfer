@@ -2,6 +2,11 @@ import type { InputState } from '../input/inputState';
 import { clamp, damp, type Vec2 } from './math';
 import type { WaveSample } from './waves';
 
+const JUMP_ASCENT_GRAVITY = 8.2;
+const JUMP_FALL_GRAVITY = 4.9;
+const MAX_JUMP_FALL_SPEED = -2.85;
+const LANDING_SURFACE_EPSILON = 0.025;
+
 export type ActiveTrick = {
   name: string;
   timer: number;
@@ -66,21 +71,31 @@ export function updateSurfer(state: SurferState, input: InputState, wave: WaveSa
   next.heading += next.turn * dt;
   next.bank = damp(state.bank, steer * 0.78 - wave.slopeX * 1.1, 7.5, dt);
   const waterPitch = -Math.atan(wave.slopeZ) * 0.42;
-  next.pitch = damp(state.pitch, clamp(waterPitch + next.airtime * 0.1, -0.24, 0.32), 8, dt);
+  next.pitch = damp(state.pitch, clamp(waterPitch, -0.24, 0.32), 8, dt);
 
   next.position.x += Math.sin(next.heading) * next.speed * dt + wave.slopeX * 5 * dt;
   next.position.z -= Math.cos(next.heading) * next.speed * dt;
 
-  if (input.trick && !next.activeTrick && next.airtime <= 0.04) {
+  const onWater = state.height <= wave.height + LANDING_SURFACE_EPSILON && state.verticalVelocity <= 0.02;
+  if (input.trick && !next.activeTrick && onWater) {
     next.activeTrick = createJumpAction(wave.lipPower);
     next.airtime = Math.max(next.airtime, 0.85 + wave.lipPower * 0.4);
     next.verticalVelocity = 4.6 + wave.lipPower * 2.1;
   }
 
-  if (next.airtime > 0) {
+  const airborne = next.airtime > 0 || state.height > wave.height + LANDING_SURFACE_EPSILON || state.verticalVelocity !== 0;
+  if (airborne) {
     next.airtime = Math.max(0, next.airtime - dt);
-    next.verticalVelocity -= 9.8 * dt;
-    next.height = Math.max(wave.height, state.height + next.verticalVelocity * dt);
+    const gravity = next.verticalVelocity > 0 ? JUMP_ASCENT_GRAVITY : JUMP_FALL_GRAVITY;
+    next.verticalVelocity = Math.max(MAX_JUMP_FALL_SPEED, next.verticalVelocity - gravity * dt);
+    const nextHeight = state.height + next.verticalVelocity * dt;
+    if (next.verticalVelocity <= 0 && nextHeight <= wave.height + LANDING_SURFACE_EPSILON) {
+      next.verticalVelocity = 0;
+      next.airtime = 0;
+      next.height = wave.height;
+    } else {
+      next.height = Math.max(wave.height, nextHeight);
+    }
   } else {
     next.verticalVelocity = 0;
     next.height = damp(state.height, wave.height, 16, dt);

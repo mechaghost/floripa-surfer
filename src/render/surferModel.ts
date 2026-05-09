@@ -16,10 +16,23 @@ import {
 } from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { SurferState } from '../game/simulation/surfer';
+import { sampleWave } from '../game/simulation/waves';
+import {
+  DEFAULT_POSE_STATE,
+  RIDER_ASSET_URL,
+  applySavedPoseToObject,
+  loadStoredPoseState,
+} from './poseState';
 
 const BOARD_DECK_Y = 0.07;
+const BOARD_HULL_BOTTOM_PERCENTILE = 0.15;
+const BOARD_HULL_CLEARANCE = 0.02;
+const BOARD_SURFACE_LENGTH = 2.9;
+const BOARD_SURFACE_WIDTH = 0.82;
+const BOARD_FIN_PROTRUSION_SCALE = 0.32;
+const MAX_VISUAL_PITCH = 0.34;
+const MAX_VISUAL_BANK = 0.82;
 const FOOT_DECK_SINK = 0.018;
-const RIDER_ASSET_URL = '/assets/models/woman-tank-top-quaternius.glb';
 
 export type SurferModel = {
   root: Group;
@@ -39,6 +52,9 @@ export function createSurferModel(): SurferModel {
   const trickPivot = new Group();
   const fallback = new Group();
   const assetRig = new Group();
+  let visualPitch = 0;
+  let visualBank = 0;
+  let previousUpdateTime: number | null = null;
   root.add(trickPivot);
   trickPivot.add(fallback, assetRig);
   assetRig.visible = false;
@@ -84,19 +100,28 @@ export function createSurferModel(): SurferModel {
   });
 
   function update(state: SurferState, time: number): void {
+    const dt = previousUpdateTime === null ? 1 / 60 : Math.min(1 / 20, Math.max(0, time - previousUpdateTime));
+    previousUpdateTime = time;
+
     const renderBank = getSurferRenderBank(state.bank);
+    const trim = getOrganicBoardTrim(state, time);
+    const targetPitch = clamp(state.pitch * 0.45 + trim.pitch, -MAX_VISUAL_PITCH, MAX_VISUAL_PITCH);
+    const targetBank = clamp(renderBank + trim.bank, -MAX_VISUAL_BANK, MAX_VISUAL_BANK);
+    visualPitch = dampValue(visualPitch, targetPitch, 7.5, dt);
+    visualBank = dampValue(visualBank, targetBank, 7.5, dt);
+
     root.position.set(state.position.x, state.height + 0.26, state.position.z);
-    root.rotation.set(state.pitch, getSurferRenderHeading(state.heading), renderBank);
+    root.rotation.set(visualPitch, getSurferRenderHeading(state.heading), visualBank);
 
     const bounce = Math.sin(time * 10 + state.speed) * 0.025;
     torso.position.y = 0.82 + bounce;
-    leftArm.rotation.z = 0.7 + renderBank * 0.8;
-    rightArm.rotation.z = -0.7 + renderBank * 0.8;
+    leftArm.rotation.z = 0.7 + visualBank * 0.8;
+    rightArm.rotation.z = -0.7 + visualBank * 0.8;
 
     if (state.activeTrick) {
       const progress = state.activeTrick.timer / state.activeTrick.duration;
       trickPivot.rotation.y = progress * Math.PI * 2 * state.activeTrick.spin;
-      trickPivot.rotation.z = Math.sin(progress * Math.PI) * 0.65;
+      trickPivot.rotation.z = Math.sin(progress * Math.PI) * 0.65 * Math.abs(state.activeTrick.spin);
     } else {
       trickPivot.rotation.y *= 0.85;
       trickPivot.rotation.z *= 0.82;
@@ -104,6 +129,64 @@ export function createSurferModel(): SurferModel {
   }
 
   return { root, update };
+}
+
+function getOrganicBoardTrim(state: SurferState, time: number): { pitch: number; bank: number } {
+  const forwardX = Math.sin(state.heading);
+  const forwardZ = -Math.cos(state.heading);
+  const rightX = Math.cos(state.heading);
+  const rightZ = Math.sin(state.heading);
+  const halfLength = BOARD_SURFACE_LENGTH * 0.5;
+  const halfWidth = BOARD_SURFACE_WIDTH * 0.5;
+
+  const nose = sampleWave(
+    state.position.x + forwardX * halfLength,
+    state.position.z + forwardZ * halfLength,
+    time,
+  );
+  const tail = sampleWave(
+    state.position.x - forwardX * halfLength,
+    state.position.z - forwardZ * halfLength,
+    time,
+  );
+  const rightRail = sampleWave(
+    state.position.x + rightX * halfWidth,
+    state.position.z + rightZ * halfWidth,
+    time,
+  );
+  const leftRail = sampleWave(
+    state.position.x - rightX * halfWidth,
+    state.position.z - rightZ * halfWidth,
+    time,
+  );
+
+  const speedFactor = clamp((state.speed - 4.5) / 11, 0, 1);
+  const waterContact = state.airtime > 0 || state.verticalVelocity !== 0 ? 0.35 : 1;
+  const surfacePitch = clamp(Math.atan2(nose.height - tail.height, BOARD_SURFACE_LENGTH) * 0.62, -0.13, 0.15);
+  const surfaceBank = clamp(Math.atan2(rightRail.height - leftRail.height, BOARD_SURFACE_WIDTH) * 0.24, -0.08, 0.08);
+  const livingPitch =
+    (Math.sin(time * 2.15 + state.position.z * 0.08) * 0.028 +
+      Math.sin(time * 4.4 + state.position.x * 0.11) * 0.012) *
+    speedFactor *
+    waterContact;
+  const livingBank =
+    (Math.sin(time * 1.65 + state.position.x * 0.1) * 0.04 +
+      Math.sin(time * 3.25 + state.position.z * 0.06) * 0.015) *
+    speedFactor *
+    waterContact;
+
+  return {
+    pitch: surfacePitch * waterContact + livingPitch,
+    bank: surfaceBank * waterContact + livingBank,
+  };
+}
+
+function dampValue(current: number, target: number, smoothing: number, dt: number): number {
+  return current + (target - current) * (1 - Math.exp(-smoothing * dt));
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }
 
 async function loadRidingAssets(assetRig: Group, fallback: Group): Promise<void> {
@@ -126,8 +209,9 @@ function prepareBoard(model: Object3D): Group {
   wrapper.name = 'RuntimeSurfboard';
   normalizeAsset(model, 3.4, 'longest');
   model.rotation.set(-Math.PI / 2, -Math.PI / 2, 0);
-  placeAssetOnDeck(model);
-  model.position.y = 0.02;
+  shortenBoardFins(model);
+  placeBoardOnHull(model);
+  model.position.y += BOARD_HULL_CLEARANCE;
   wrapper.add(model);
   wrapper.rotation.x = -0.05;
   return wrapper;
@@ -145,6 +229,7 @@ function prepareRider(model: Object3D, animations: AnimationClip[]): Group {
   wrapper.add(model);
   tintRiderForSurf(model);
   applyAnimationPose(model, animations);
+  applyStoredDefaultPose(model);
   snapFeetToDeck(model, BOARD_DECK_Y);
   return wrapper;
 }
@@ -179,12 +264,88 @@ function setRuntimeFlags(model: Object3D): void {
   });
 }
 
-function placeAssetOnDeck(model: Object3D): void {
+function placeBoardOnHull(model: Object3D): void {
   const box = new Box3().setFromObject(model);
   const center = box.getCenter(new Vector3());
+  const hullBottomY = estimateBoardHullBottom(model, box.min.y);
   model.position.x -= center.x;
   model.position.z -= center.z;
-  model.position.y -= box.min.y;
+  model.position.y -= hullBottomY;
+}
+
+function shortenBoardFins(model: Object3D): void {
+  const box = new Box3().setFromObject(model);
+  const hullBottomY = estimateBoardHullBottom(model, box.min.y);
+  const vertex = new Vector3();
+  const worldVertex = new Vector3();
+
+  model.updateMatrixWorld(true);
+  model.traverse((child) => {
+    if (!(child instanceof Mesh)) {
+      return;
+    }
+
+    const positions = child.geometry.getAttribute('position');
+    if (!positions) {
+      return;
+    }
+
+    let changed = false;
+    for (let index = 0; index < positions.count; index += 1) {
+      vertex.fromBufferAttribute(positions, index);
+      worldVertex.copy(vertex);
+      child.localToWorld(worldVertex);
+
+      if (worldVertex.y >= hullBottomY) {
+        continue;
+      }
+
+      worldVertex.y = hullBottomY + (worldVertex.y - hullBottomY) * BOARD_FIN_PROTRUSION_SCALE;
+      child.worldToLocal(worldVertex);
+      positions.setXYZ(index, worldVertex.x, worldVertex.y, worldVertex.z);
+      changed = true;
+    }
+
+    if (changed) {
+      positions.needsUpdate = true;
+      child.geometry.computeVertexNormals();
+      child.geometry.computeBoundingBox();
+      child.geometry.computeBoundingSphere();
+    }
+  });
+}
+
+function estimateBoardHullBottom(model: Object3D, fallbackY: number): number {
+  const vertex = new Vector3();
+  const yValues: number[] = [];
+
+  model.updateMatrixWorld(true);
+  model.traverse((child) => {
+    if (!(child instanceof Mesh)) {
+      return;
+    }
+
+    const positions = child.geometry.getAttribute('position');
+    if (!positions) {
+      return;
+    }
+
+    for (let index = 0; index < positions.count; index += 1) {
+      vertex.fromBufferAttribute(positions, index).applyMatrix4(child.matrixWorld);
+      yValues.push(vertex.y);
+    }
+  });
+
+  if (yValues.length === 0) {
+    return fallbackY;
+  }
+
+  yValues.sort((a, b) => a - b);
+  const hullIndex = Math.min(
+    yValues.length - 1,
+    Math.floor((yValues.length - 1) * BOARD_HULL_BOTTOM_PERCENTILE),
+  );
+  return yValues[hullIndex];
 }
 
 function snapFeetToDeck(model: Object3D, deckY: number): void {
@@ -256,6 +417,15 @@ function applyAnimationPose(model: Object3D, animations: AnimationClip[]): void 
   const action = mixer.clipAction(clip);
   action.play();
   mixer.setTime(Math.min(0.32, clip.duration * 0.45));
+}
+
+function applyStoredDefaultPose(model: Object3D): void {
+  const pose = loadStoredPoseState(DEFAULT_POSE_STATE);
+  if (!pose) {
+    return;
+  }
+
+  applySavedPoseToObject(pose, model);
 }
 
 function limb(x: number, y: number, z: number, roll: number, material: MeshStandardMaterial): Mesh {

@@ -21,6 +21,7 @@ const CAMERA_LOOK_AHEAD = 1.6;
 const CAMERA_LOOK_HEIGHT = 1.1;
 const CAMERA_YAW_DAMPING = 1.45;
 const CAMERA_LOOK_YAW_DAMPING = 2.15;
+const SUN_OFFSET = new Vector3(-18, 30, 16);
 
 export type World = {
   scene: Scene;
@@ -43,10 +44,19 @@ export function createWorld(): World {
   scene.add(ambient);
 
   const sun = new DirectionalLight('#fff2cc', 3.4);
-  sun.position.set(-18, 30, 16);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(1024, 1024);
+  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.camera.left = -8;
+  sun.shadow.camera.right = 8;
+  sun.shadow.camera.top = 8;
+  sun.shadow.camera.bottom = -8;
+  sun.shadow.camera.near = 1;
+  sun.shadow.camera.far = 70;
+  sun.shadow.bias = -0.00035;
+  sun.shadow.normalBias = 0.035;
+  sun.position.copy(SUN_OFFSET);
   scene.add(sun);
+  scene.add(sun.target);
 
   const backdrop = createFloripaBackdrop();
   scene.add(backdrop);
@@ -90,6 +100,10 @@ export function createWorld(): World {
 
     backdrop.position.x = state.position.x;
     backdrop.position.z = state.position.z;
+
+    sun.target.position.copy(board);
+    sun.position.copy(board).add(SUN_OFFSET);
+    sun.target.updateMatrixWorld();
   }
 
   return { scene, camera, updateCamera };

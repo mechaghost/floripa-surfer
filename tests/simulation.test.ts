@@ -47,6 +47,65 @@ describe('surfer simulation', () => {
     expect(jumped.combo).toBe(state.combo);
   });
 
+  it('keeps a jump vertical instead of pitching the board up', () => {
+    const state = createInitialSurferState();
+    const input = createInputState();
+    input.trick = true;
+
+    const flatWave = { height: 0, slopeX: 0, slopeZ: 0, lipPower: 0.1, facePower: 0.2 };
+    const jumped = updateSurfer(state, input, flatWave, 0.16);
+    const airborne = updateSurfer(jumped, createInputState(), flatWave, 0.16);
+
+    expect(airborne.height).toBeGreaterThan(state.height);
+    expect(airborne.pitch).toBeCloseTo(0);
+  });
+
+  it('keeps jump descent from becoming too steep', () => {
+    let state = createInitialSurferState();
+    const input = createInputState();
+    input.trick = true;
+    const flatWave = { height: 0, slopeX: 0, slopeZ: 0, lipPower: 0.1, facePower: 0.2 };
+
+    state = updateSurfer(state, input, flatWave, 1 / 30);
+    input.trick = false;
+    let fastestDrop = 0;
+    for (let frame = 0; frame < 45; frame += 1) {
+      state = updateSurfer(state, input, flatWave, 1 / 30);
+      fastestDrop = Math.min(fastestDrop, state.verticalVelocity);
+    }
+
+    expect(fastestDrop).toBeGreaterThanOrEqual(-2.85);
+  });
+
+  it('keeps the jump height on a steady arc until landing', () => {
+    let state = createInitialSurferState();
+    const input = createInputState();
+    input.trick = true;
+    const flatWave = { height: 0, slopeX: 0, slopeZ: 0, lipPower: 0.1, facePower: 0.2 };
+
+    state = updateSurfer(state, input, flatWave, 1 / 30);
+    input.trick = false;
+    let largestFrameDrop = 0;
+    let canDoubleJumpInAir = false;
+
+    for (let frame = 0; frame < 90; frame += 1) {
+      const previousHeight = state.height;
+      state = updateSurfer(state, input, flatWave, 1 / 30);
+      largestFrameDrop = Math.min(largestFrameDrop, state.height - previousHeight);
+
+      const jumpAgain = createInputState();
+      jumpAgain.trick = true;
+      const attempted = updateSurfer(state, jumpAgain, flatWave, 1 / 30);
+      if (state.height > flatWave.height + 0.05 && !state.activeTrick && attempted.activeTrick?.name === 'Jump') {
+        canDoubleJumpInAir = true;
+      }
+    }
+
+    expect(largestFrameDrop).toBeGreaterThanOrEqual((-2.85 / 30) - 0.001);
+    expect(canDoubleJumpInAir).toBe(false);
+    expect(state.height).toBe(flatWave.height);
+  });
+
   it('keeps the board close to the water plane on steep wave faces', () => {
     const state = createInitialSurferState();
     const input = createInputState();
