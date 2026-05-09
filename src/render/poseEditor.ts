@@ -252,7 +252,11 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
     if (ikHits[0]?.object instanceof Mesh) {
       const handle = ikHandles.find((item) => item.target === ikHits[0].object);
       selectIk(handle ?? null);
+      return;
     }
+
+    selectJoint(null);
+    ui.status.textContent = 'No joint selected.';
   }
 
   function selectJoint(marker: PoseMarker | null): void {
