@@ -1,4 +1,5 @@
 import { Euler, Quaternion, Vector3, type Object3D } from 'three';
+import bundledPoseLibraryJson from '../data/defaultPoseLibrary.json';
 
 export const RIDER_ASSET_URL = '/assets/models/woman-tank-top-quaternius.glb';
 export const POSE_STORAGE_KEY = 'floripa-surfer-pose-editor';
@@ -34,36 +35,17 @@ export type PoseLibrary = {
 };
 
 export function loadPoseLibrary(): PoseLibrary {
-  const emptyLibrary = createEmptyPoseLibrary();
+  const bundledLibrary = createBundledPoseLibrary();
   const saved = readPoseStorage();
   if (!saved) {
-    return emptyLibrary;
+    return bundledLibrary;
   }
 
   try {
-    const parsed = JSON.parse(saved) as Partial<PoseLibrary> & Partial<SavedPose>;
-    if (parsed.states && typeof parsed.states === 'object') {
-      return {
-        asset: parsed.asset ?? RIDER_ASSET_URL,
-        updatedAt: parsed.updatedAt ?? new Date().toISOString(),
-        activeState: normalizePoseStateName(parsed.activeState ?? DEFAULT_POSE_STATE),
-        states: parsed.states,
-      };
-    }
-
-    if (parsed.bones && typeof parsed.bones === 'object') {
-      return {
-        ...emptyLibrary,
-        states: {
-          [DEFAULT_POSE_STATE]: parsed as SavedPose,
-        },
-      };
-    }
+    return normalizePoseLibraryInput(JSON.parse(saved), bundledLibrary);
   } catch {
-    return emptyLibrary;
+    return bundledLibrary;
   }
-
-  return emptyLibrary;
 }
 
 export function savePoseLibrary(library: PoseLibrary): void {
@@ -194,6 +176,73 @@ function createEmptyPoseLibrary(): PoseLibrary {
     updatedAt: new Date().toISOString(),
     activeState: DEFAULT_POSE_STATE,
     states: {},
+  };
+}
+
+function createBundledPoseLibrary(): PoseLibrary {
+  return normalizePoseLibraryInput(bundledPoseLibraryJson, createEmptyPoseLibrary());
+}
+
+function normalizePoseLibraryInput(value: unknown, fallback: PoseLibrary): PoseLibrary {
+  if (!value || typeof value !== 'object') {
+    return clonePoseLibrary(fallback);
+  }
+
+  const parsed = value as Partial<PoseLibrary> & Partial<SavedPose>;
+  if (parsed.states && typeof parsed.states === 'object') {
+    return {
+      asset: parsed.asset ?? fallback.asset,
+      updatedAt: parsed.updatedAt ?? fallback.updatedAt,
+      activeState: normalizePoseStateName(parsed.activeState ?? fallback.activeState),
+      states: clonePoseStates(parsed.states as Record<string, SavedPose>),
+    };
+  }
+
+  if (parsed.bones && typeof parsed.bones === 'object') {
+    return {
+      ...clonePoseLibrary(fallback),
+      states: {
+        ...clonePoseStates(fallback.states),
+        [DEFAULT_POSE_STATE]: cloneSavedPose(parsed as SavedPose),
+      },
+    };
+  }
+
+  return clonePoseLibrary(fallback);
+}
+
+function clonePoseLibrary(library: PoseLibrary): PoseLibrary {
+  return {
+    asset: library.asset,
+    updatedAt: library.updatedAt,
+    activeState: library.activeState,
+    states: clonePoseStates(library.states),
+  };
+}
+
+function clonePoseStates(states: Record<string, SavedPose>): Record<string, SavedPose> {
+  return Object.fromEntries(
+    Object.entries(states).map(([name, pose]) => [name, cloneSavedPose(pose)]),
+  );
+}
+
+function cloneSavedPose(pose: SavedPose): SavedPose {
+  return {
+    asset: pose.asset ?? RIDER_ASSET_URL,
+    savedAt: pose.savedAt ?? new Date().toISOString(),
+    bones: Object.fromEntries(
+      Object.entries(pose.bones ?? {}).map(([name, transform]) => [
+        name,
+        {
+          position: [...transform.position],
+          rotation: [...transform.rotation],
+          scale: [...transform.scale],
+        },
+      ]),
+    ),
+    ikTargets: Object.fromEntries(
+      Object.entries(pose.ikTargets ?? {}).map(([name, target]) => [name, [...target]]),
+    ),
   };
 }
 

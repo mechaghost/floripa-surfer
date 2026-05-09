@@ -725,16 +725,16 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = 'floripa-surfer-poses.json';
+    link.download = 'defaultPoseLibrary.json';
     link.click();
     URL.revokeObjectURL(url);
-    ui.status.textContent = 'Pose states exported as JSON. Commit that file to make poses durable for production.';
+    ui.status.textContent = 'Pose states exported. Replace src/data/defaultPoseLibrary.json and commit for production.';
   }
 
   function copyPose(): void {
     updateOutput();
     void navigator.clipboard.writeText(poseJson).then(() => {
-      ui.status.textContent = 'Pose JSON copied. Commit it as a repo asset to make poses durable for production.';
+      ui.status.textContent = 'Pose JSON copied. Save it to src/data/defaultPoseLibrary.json and commit for production.';
     }).catch(() => {
       ui.status.textContent = 'Clipboard blocked. Use Export Poses instead.';
     });
@@ -745,7 +745,7 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
     poseLibrary = createPoseLibrarySnapshot(poseLibrary, activeState, markers, ikHandles);
     savePoseLibrary(poseLibrary);
     populateStateSelect(ui.stateSelect, poseLibrary, activeState);
-    ui.status.textContent = `Saved "${activeState}" in this browser. Export poses to make them durable in git.`;
+    ui.status.textContent = `Saved "${activeState}" in this browser. Export poses to update the bundled git file.`;
     updateOutput();
   }
 

@@ -105,12 +105,13 @@ describe('pose state', () => {
     expect(getPoseStateOptions(library, 'air-jump')).toContain('custom-pose');
   });
 
-  it('loads invalid storage as an empty pose library and migrates legacy pose JSON', () => {
+  it('falls back to bundled poses for invalid storage and migrates legacy pose JSON', () => {
     const storage = createMemoryStorage();
     vi.stubGlobal('localStorage', storage);
     storage.setItem(POSE_STORAGE_KEY, '{nope');
 
-    expect(loadPoseLibrary().states).toEqual({});
+    expect(loadPoseLibrary().states.default).toBeDefined();
+    expect(loadPoseLibrary().states['idle-1']).toBeDefined();
 
     const legacyPose = createSavedPose('legacy');
     storage.setItem(POSE_STORAGE_KEY, JSON.stringify(legacyPose));
