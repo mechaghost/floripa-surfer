@@ -262,6 +262,33 @@ canvas {
   transform: translateY(0) scale(1);
 }
 
+.game-tool-link {
+  position: absolute;
+  top: max(18px, env(safe-area-inset-top));
+  right: max(18px, env(safe-area-inset-right));
+  z-index: 6;
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.34);
+  background: rgba(5, 45, 56, 0.46);
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 0.76rem;
+  font-weight: 850;
+  text-decoration: none;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  backdrop-filter: blur(10px);
+  box-shadow: 0 10px 28px rgba(2, 31, 38, 0.18);
+  pointer-events: auto;
+}
+
+.game-tool-link:focus-visible {
+  outline: 2px solid rgba(255, 239, 92, 0.9);
+  outline-offset: 3px;
+}
+
 .touch {
   position: absolute;
   inset: 0;

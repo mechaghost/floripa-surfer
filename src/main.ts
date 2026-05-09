@@ -90,13 +90,14 @@ const waterCues = createWaterMotionCues();
 const input = createInputState();
 const hud = createHud();
 const touchControls = createTouchControls(input);
+const poseEditorLink = createPoseEditorLink();
 const detachKeyboard = attachKeyboard(input);
 const clock = new Clock();
 let surferState = createInitialSurferState();
 let elapsed = 0;
 
 scene.add(ocean.mesh, contactFoam.root, wake.root, surfer.root, spray.root, waterCues.root);
-shell.append(hud.root, touchControls.root);
+shell.append(hud.root, touchControls.root, poseEditorLink);
 
 window.addEventListener('resize', resize);
 window.addEventListener('pagehide', dispose);
@@ -560,6 +561,15 @@ function createBoardWake(): BoardWake {
 
 function getContactDepth(waterHeight: number, boardHeight: number): number {
   return Math.min(1, Math.max(0, (waterHeight - boardHeight + 0.22) * 1.4));
+}
+
+function createPoseEditorLink(): HTMLAnchorElement {
+  const link = document.createElement('a');
+  link.className = 'game-tool-link';
+  link.href = '?view=pose-editor';
+  link.textContent = 'Pose Editor';
+  link.setAttribute('aria-label', 'Open pose editor');
+  return link;
 }
 
 window.floripaSurfer = {
