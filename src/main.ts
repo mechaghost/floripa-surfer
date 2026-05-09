@@ -1,22 +1,23 @@
 import {
   AdditiveBlending,
   AmbientLight,
-  BufferAttribute,
-  BufferGeometry,
   Clock,
   Color,
   DirectionalLight,
   DoubleSide,
   DynamicDrawUsage,
   Group,
+  IcosahedronGeometry,
+  InstancedMesh,
+  Matrix4,
   Mesh,
   MeshBasicMaterial,
   OrthographicCamera,
   PCFSoftShadowMap,
   PlaneGeometry,
   PerspectiveCamera,
+  Quaternion,
   Scene,
-  ShaderMaterial,
   SphereGeometry,
   Vector3,
   WebGLRenderer,
@@ -194,217 +195,124 @@ type BoardContactFoam = {
   update: (state: typeof surferState, lipPower: number, time: number) => void;
 };
 
-type ContactFoamPatch = {
-  base: number;
-  index: number;
+type FoamBubble = {
   kind: 'rail' | 'noseTail';
-  localA: { x: number; z: number };
-  localB: { x: number; z: number };
+  side: -1 | 1;
+  offset: number;
+  speed: number;
+  radius: number;
+  lift: number;
+  wobble: number;
   seed: number;
 };
 
 function createBoardContactFoam(): BoardContactFoam {
   const root = new Group();
-  const positions: number[] = [];
-  const uvs: number[] = [];
-  const foams: number[] = [];
-  const seeds: number[] = [];
-  const indices: number[] = [];
-  const patches: ContactFoamPatch[] = [];
+  const bubbles: FoamBubble[] = [];
+  const count = 460;
   const boardHalfLength = 1.55;
   const boardHalfWidth = 0.34;
-  const railFoamWidth = 0.36;
-  const endFoamLength = 0.3;
-  const railSegments = 20;
-  const endSegments = 8;
 
-  function addPatch(kind: ContactFoamPatch['kind'], localA: ContactFoamPatch['localA'], localB: ContactFoamPatch['localB'], seed: number): void {
-    const base = positions.length / 3;
-    positions.push(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
-    uvs.push(0, 0, 1, 0, 0, 1, 1, 1);
-    foams.push(0, 0, 0, 0);
-    seeds.push(seed, seed, seed, seed);
-    indices.push(base, base + 2, base + 1, base + 2, base + 3, base + 1);
-    patches.push({ base, index: patches.length, kind, localA, localB, seed });
+  for (let index = 0; index < count; index += 1) {
+    const seed = index * 11.73 + 5.1;
+    const rail = index < count * 0.76;
+    bubbles.push({
+      kind: rail ? 'rail' : 'noseTail',
+      side: index % 2 === 0 ? -1 : 1,
+      offset: pseudo(seed + 0.2),
+      speed: 0.08 + pseudo(seed + 1.7) * 0.22,
+      radius: 0.065 + pseudo(seed + 2.4) * 0.11,
+      lift: 0.04 + pseudo(seed + 3.8) * 0.12,
+      wobble: 0.05 + pseudo(seed + 4.6) * 0.22,
+      seed,
+    });
   }
 
-  for (let side = -1; side <= 1; side += 2) {
-    for (let i = 0; i < railSegments; i += 1) {
-      const z0 = -boardHalfLength + (i / railSegments) * boardHalfLength * 2;
-      const z1 = -boardHalfLength + ((i + 1) / railSegments) * boardHalfLength * 2;
-      addPatch(
-        'rail',
-        { x: side * boardHalfWidth, z: z0 },
-        { x: side * (boardHalfWidth + railFoamWidth), z: z1 },
-        i * 8.17 + side * 13.4,
-      );
-    }
-  }
-
-  for (let end = -1; end <= 1; end += 2) {
-    for (let i = 0; i < endSegments; i += 1) {
-      const x0 = -boardHalfWidth + (i / endSegments) * boardHalfWidth * 2;
-      const x1 = -boardHalfWidth + ((i + 1) / endSegments) * boardHalfWidth * 2;
-      addPatch(
-        'noseTail',
-        { x: x0, z: end * boardHalfLength },
-        { x: x1, z: end * (boardHalfLength + endFoamLength) },
-        70 + i * 9.11 + end * 21.3,
-      );
-    }
-  }
-
-  const geometry = new BufferGeometry();
-  const positionAttribute = new BufferAttribute(new Float32Array(positions), 3);
-  const foamAttribute = new BufferAttribute(new Float32Array(foams), 1);
-  positionAttribute.setUsage(DynamicDrawUsage);
-  foamAttribute.setUsage(DynamicDrawUsage);
-  geometry.setAttribute('position', positionAttribute);
-  geometry.setAttribute('uv', new BufferAttribute(new Float32Array(uvs), 2));
-  geometry.setAttribute('aFoam', foamAttribute);
-  geometry.setAttribute('aSeed', new BufferAttribute(new Float32Array(seeds), 1));
-  geometry.setIndex(indices);
-
-  const material = new ShaderMaterial({
+  const geometry = new IcosahedronGeometry(1, 1);
+  const material = new MeshBasicMaterial({
+    color: new Color('#f2ffff'),
     transparent: true,
+    opacity: 0.95,
     depthWrite: false,
-    side: DoubleSide,
-    blending: AdditiveBlending,
-    uniforms: {
-      uTime: { value: 0 },
-      uColor: { value: new Color('#efffff') },
-    },
-    vertexShader: `
-      attribute float aFoam;
-      attribute float aSeed;
-      varying vec2 vUv;
-      varying float vFoam;
-      varying float vSeed;
-
-      void main() {
-        vUv = uv;
-        vFoam = aFoam;
-        vSeed = aSeed;
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-      }
-    `,
-    fragmentShader: `
-      precision highp float;
-
-      uniform float uTime;
-      uniform vec3 uColor;
-      varying vec2 vUv;
-      varying float vFoam;
-      varying float vSeed;
-
-      float foamNoise(vec2 p) {
-        float a = sin(p.x * 17.0 + p.y * 6.0 + uTime * 5.2 + vSeed);
-        float b = sin(p.x * -9.0 + p.y * 21.0 - uTime * 4.1 + vSeed * 1.37);
-        float c = sin((p.x + p.y) * 31.0 + uTime * 8.7 + vSeed * 0.61);
-        return (a + b * 0.72 + c * 0.38) / 2.1;
-      }
-
-      void main() {
-        float innerEdge = 1.0 - smoothstep(0.0, 0.18, vUv.y);
-        float feather = 1.0 - smoothstep(0.55, 1.0, vUv.y);
-        float lace = smoothstep(-0.34, 0.62, foamNoise(vUv + vec2(uTime * 0.16, -uTime * 0.09)));
-        float bubbles = smoothstep(0.28, 0.92, foamNoise(vUv * vec2(2.8, 1.5) + vec2(vSeed, uTime * 0.23)));
-        float alpha = vFoam * feather * (0.18 + lace * 0.52 + bubbles * 0.24);
-        alpha *= 1.0 - innerEdge * 0.55;
-        alpha *= 0.72;
-
-        if (alpha < 0.01) {
-          discard;
-        }
-
-        gl_FragColor = vec4(uColor, alpha);
-      }
-    `,
   });
-  const mesh = new Mesh(geometry, material);
-  mesh.renderOrder = 5;
+  const mesh = new InstancedMesh(geometry, material, count);
+  mesh.instanceMatrix.setUsage(DynamicDrawUsage);
+  mesh.frustumCulled = false;
+  mesh.renderOrder = 6;
   root.add(mesh);
 
-  const tmpWorldA = new Vector3();
-  const tmpWorldB = new Vector3();
-  const tmpWorldC = new Vector3();
-  const tmpWorldD = new Vector3();
+  const matrix = new Matrix4();
+  const position = new Vector3();
+  const scale = new Vector3();
+  const rotation = new Quaternion();
+  const axis = new Vector3();
+  const hiddenScale = new Vector3(0.001, 0.001, 0.001);
 
   function update(state: typeof surferState, lipPower: number, time: number): void {
-    const position = geometry.attributes.position as BufferAttribute;
-    const foam = geometry.attributes.aFoam as BufferAttribute;
     const forwardX = Math.sin(state.heading);
     const forwardZ = -Math.cos(state.heading);
     const rightX = Math.cos(state.heading);
     const rightZ = Math.sin(state.heading);
     const boardPitch = Math.sin(state.pitch);
     const speedFoam = Math.min(1, Math.max(0, (state.speed - 3.2) / 8));
-    material.uniforms.uTime.value = time;
+    const airborneFade = state.airtime > 0 || state.verticalVelocity !== 0 ? 0.35 : 1;
 
-    for (const patch of patches) {
-      const localX0 = patch.localA.x;
-      const localX1 = patch.localB.x;
-      const localZ0 = patch.localA.z;
-      const localZ1 = patch.localB.z;
-      const sideSign = Math.sign((localX0 + localX1) * 0.5) || 1;
-      const endSign = Math.sign((localZ0 + localZ1) * 0.5) || 1;
+    bubbles.forEach((bubble, index) => {
+      const loop = wrap01(bubble.offset + time * bubble.speed + Math.sin(time * 0.45 + bubble.seed) * 0.035);
+      let localX = 0;
+      let localZ = 0;
 
-      setContactVertex(tmpWorldA, state, forwardX, forwardZ, rightX, rightZ, localX0, localZ0, time);
-      setContactVertex(tmpWorldB, state, forwardX, forwardZ, rightX, rightZ, localX1, localZ0, time);
-      setContactVertex(tmpWorldC, state, forwardX, forwardZ, rightX, rightZ, localX0, localZ1, time);
-      setContactVertex(tmpWorldD, state, forwardX, forwardZ, rightX, rightZ, localX1, localZ1, time);
+      if (bubble.kind === 'rail') {
+        const drift = Math.sin(time * 3.3 + bubble.seed) * bubble.wobble;
+        localZ = -boardHalfLength + loop * boardHalfLength * 2 + drift;
+        localX = bubble.side * (boardHalfWidth + 0.08 + pseudo(bubble.seed + time * 0.18) * 0.36);
+      } else {
+        const end = bubble.side;
+        const walk = loop * Math.PI * 2;
+        localZ = end * (boardHalfLength + 0.08 + Math.sin(walk + time * 1.4 + bubble.seed) * 0.22);
+        localX = Math.sin(walk + bubble.seed) * (boardHalfWidth + 0.22) + Math.sin(time * 3.9 + bubble.seed) * 0.08;
+      }
 
-      const boardHeightA = state.height - boardPitch * localZ0;
-      const boardHeightB = state.height - boardPitch * localZ1;
-      const waterA = sampleWave(tmpWorldA.x, tmpWorldA.z, time);
-      const waterB = sampleWave(tmpWorldD.x, tmpWorldD.z, time);
-      const depthA = getContactDepth(waterA.height, boardHeightA);
-      const depthB = getContactDepth(waterB.height, boardHeightB);
-      const plowBias = patch.kind === 'rail'
-        ? Math.max(0, sideSign * state.turn) * 0.22
-        : (endSign > 0 ? lipPower * 0.35 : 0.18);
-      const intensity = Math.min(1, (depthA + depthB) * 0.5 * (0.55 + speedFoam * 0.75) + plowBias);
-      const pulse = 0.84 + Math.sin(time * 7.4 + patch.seed) * 0.09 + pseudo(patch.seed + time * 0.23) * 0.08;
-      const alpha = intensity * pulse;
+      const x = state.position.x + rightX * localX + forwardX * localZ;
+      const z = state.position.z + rightZ * localX + forwardZ * localZ;
+      const water = sampleWave(x, z, time);
+      const boardHeight = state.height - boardPitch * localZ - Math.sin(state.bank) * localX * 0.42;
+      const depth = getContactDepth(water.height, boardHeight);
+      const pressureBias = bubble.kind === 'rail'
+        ? Math.max(0, bubble.side * state.turn) * 0.22
+        : (Math.sign(localZ) > 0 ? lipPower * 0.42 : 0.18);
+      const contact = Math.min(1, (depth * (0.42 + speedFoam * 0.85) + pressureBias) * airborneFade);
+      const pulse = 0.72 + Math.sin(time * 9.5 + bubble.seed) * 0.18 + pseudo(bubble.seed + time * 0.31) * 0.2;
+      const size = bubble.radius * Math.max(0, contact * pulse);
 
-      writePosition(position, patch.base, tmpWorldA);
-      writePosition(position, patch.base + 1, tmpWorldB);
-      writePosition(position, patch.base + 2, tmpWorldC);
-      writePosition(position, patch.base + 3, tmpWorldD);
-      foam.setX(patch.base, alpha * 0.85);
-      foam.setX(patch.base + 1, alpha);
-      foam.setX(patch.base + 2, alpha * 0.58);
-      foam.setX(patch.base + 3, alpha * 0.7);
-    }
+      if (size < 0.006) {
+        matrix.compose(position.set(x, water.height, z), rotation, hiddenScale);
+        mesh.setMatrixAt(index, matrix);
+        return;
+      }
 
-    position.needsUpdate = true;
-    foam.needsUpdate = true;
-    geometry.computeBoundingSphere();
+      const orbit = time * (2.6 + bubble.speed * 10) + bubble.seed;
+      const bob = Math.sin(orbit) * bubble.lift + Math.sin(orbit * 1.9) * 0.025;
+      position.set(
+        x + Math.sin(orbit * 0.73) * 0.035,
+        water.height + 0.07 + bob + size * 0.45,
+        z + Math.cos(orbit * 0.61) * 0.035,
+      );
+      scale.setScalar(size * (0.92 + Math.sin(orbit * 1.23) * 0.18));
+      axis.set(Math.sin(bubble.seed), 1, Math.cos(bubble.seed * 1.3)).normalize();
+      rotation.setFromAxisAngle(axis, orbit * 0.37);
+      matrix.compose(position, rotation, scale);
+      mesh.setMatrixAt(index, matrix);
+    });
+
+    mesh.instanceMatrix.needsUpdate = true;
   }
 
   return { root, update };
 }
 
-function setContactVertex(
-  target: Vector3,
-  state: SurferState,
-  forwardX: number,
-  forwardZ: number,
-  rightX: number,
-  rightZ: number,
-  localX: number,
-  localZ: number,
-  time: number,
-): void {
-  const x = state.position.x + rightX * localX + forwardX * localZ;
-  const z = state.position.z + rightZ * localX + forwardZ * localZ;
-  const wave = sampleWave(x, z, time);
-  const fizz = Math.sin(time * 9.5 + localX * 7.7 + localZ * 3.1) * 0.018;
-  target.set(x, wave.height + 0.058 + fizz, z);
-}
-
-function writePosition(attribute: BufferAttribute, index: number, position: Vector3): void {
-  attribute.setXYZ(index, position.x, position.y, position.z);
+function wrap01(value: number): number {
+  return value - Math.floor(value);
 }
 
 type Spray = {
