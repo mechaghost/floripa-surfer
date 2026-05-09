@@ -1851,43 +1851,71 @@ function createPoseEditorUi(shell: HTMLElement): {
   panel.innerHTML = `
     <div class="pose-editor__header">
       <div>
-        <div class="pose-editor__eyebrow">Pose Editor</div>
+        <div class="pose-editor__eyebrow">Floripa Pose Studio</div>
+        <div class="pose-editor__label">Selection</div>
         <div class="pose-editor__selected">No selection</div>
       </div>
+      <a class="pose-editor__button pose-editor__link-button" href="./" aria-label="Exit pose editor">Exit</a>
+    </div>
+    <div class="pose-editor__status" aria-live="polite">Joint mode: click a joint to rotate it. Switch to IK mode for purple targets.</div>
+    <section class="pose-editor__section">
+      <div class="pose-editor__section-title">Pose State</div>
+      <div class="pose-editor__state">
+        <select class="pose-editor__select" data-role="state-select" aria-label="Pose state"></select>
+        <button class="pose-editor__button" data-action="load-base" type="button">Load Base Pose</button>
+        <button class="pose-editor__button pose-editor__button--active" data-action="save-state" type="button">Save Local State</button>
+      </div>
+    </section>
+    <section class="pose-editor__section">
+      <div class="pose-editor__section-title">Selection Mode</div>
       <div class="pose-editor__mode">
-        <button class="pose-editor__button pose-editor__button--active" data-action="rotate" type="button" aria-pressed="true">Joint Mode</button>
-        <button class="pose-editor__button" data-action="translate" type="button" aria-pressed="false">IK Mode</button>
-        <button class="pose-editor__button pose-editor__button--active pose-editor__axis-button" data-axis="x" type="button">X</button>
-        <button class="pose-editor__button pose-editor__axis-button" data-axis="y" type="button">Y</button>
-        <button class="pose-editor__button pose-editor__axis-button" data-axis="z" type="button">Z</button>
+        <button class="pose-editor__button pose-editor__button--active" data-action="rotate" type="button" aria-pressed="true">Joint Rotation</button>
+        <button class="pose-editor__button" data-action="translate" type="button" aria-pressed="false">IK Targets</button>
         <button class="pose-editor__button" data-action="undo" type="button" disabled>Undo</button>
         <button class="pose-editor__button" data-action="redo" type="button" disabled>Redo</button>
       </div>
-    </div>
-    <div class="pose-editor__state">
-      <select class="pose-editor__select" data-role="state-select" aria-label="Pose state"></select>
-      <button class="pose-editor__button" data-action="load-base" type="button">Load Base</button>
-      <button class="pose-editor__button pose-editor__button--active" data-action="save-state" type="button">Save State</button>
-    </div>
-    <div class="pose-editor__views">
-      <button class="pose-editor__button pose-editor__button--active" data-view="iso" type="button" aria-pressed="true">Iso</button>
-      <button class="pose-editor__button" data-view="left" type="button" aria-pressed="false">Left</button>
-      <button class="pose-editor__button" data-view="right" type="button" aria-pressed="false">Right</button>
-      <button class="pose-editor__button" data-view="top" type="button" aria-pressed="false">Top</button>
-      <button class="pose-editor__button" data-view="down" type="button" aria-pressed="false">Down</button>
-      <button class="pose-editor__button" data-action="projection" type="button" aria-pressed="false">Ortho</button>
-    </div>
-    <div class="pose-editor__actions">
-      <button class="pose-editor__button" data-action="solve-ik" type="button">Solve IK</button>
-      <button class="pose-editor__button" data-action="sync-ik" type="button">Sync IK</button>
-      <button class="pose-editor__button" data-action="reset-selected" type="button">Reset Selected</button>
-      <button class="pose-editor__button" data-action="reset-all" type="button">Reset All</button>
-      <button class="pose-editor__button" data-action="reference-image" type="button">Reference Image</button>
-      <button class="pose-editor__button" data-action="copy" type="button">Copy Pose File</button>
-      <button class="pose-editor__button pose-editor__button--primary" data-action="save" type="button">Download Pose File</button>
-      <a class="pose-editor__button pose-editor__link-button" href="./" aria-label="Exit pose editor">Exit</a>
-    </div>
-    <div class="pose-editor__status">Joint mode: click a joint to rotate it. Switch to IK mode for purple targets.</div>
+      <div class="pose-editor__axis-group">
+        <div class="pose-editor__inline-label">Nudge Axis</div>
+        <div class="pose-editor__axis-buttons">
+          <button class="pose-editor__button pose-editor__button--active pose-editor__axis-button" data-axis="x" type="button">X</button>
+          <button class="pose-editor__button pose-editor__axis-button" data-axis="y" type="button">Y</button>
+          <button class="pose-editor__button pose-editor__axis-button" data-axis="z" type="button">Z</button>
+        </div>
+      </div>
+    </section>
+    <section class="pose-editor__section">
+      <div class="pose-editor__section-title">Camera View</div>
+      <div class="pose-editor__views">
+        <button class="pose-editor__button pose-editor__button--active" data-view="iso" type="button" aria-pressed="true">Isometric</button>
+        <button class="pose-editor__button" data-view="left" type="button" aria-pressed="false">Left</button>
+        <button class="pose-editor__button" data-view="right" type="button" aria-pressed="false">Right</button>
+        <button class="pose-editor__button" data-view="top" type="button" aria-pressed="false">Top</button>
+        <button class="pose-editor__button" data-view="down" type="button" aria-pressed="false">Bottom</button>
+        <button class="pose-editor__button" data-action="projection" type="button" aria-pressed="false">Orthographic</button>
+      </div>
+    </section>
+    <section class="pose-editor__section">
+      <div class="pose-editor__section-title">IK Tools</div>
+      <div class="pose-editor__actions">
+        <button class="pose-editor__button" data-action="solve-ik" type="button">Solve IK</button>
+        <button class="pose-editor__button" data-action="sync-ik" type="button">Sync Targets</button>
+        <button class="pose-editor__button" data-action="reset-selected" type="button">Reset Selected</button>
+        <button class="pose-editor__button" data-action="reset-all" type="button">Reset Rig</button>
+      </div>
+    </section>
+    <section class="pose-editor__section">
+      <div class="pose-editor__section-title">Pose Sources</div>
+      <div class="pose-editor__actions">
+        <button class="pose-editor__button" data-action="reference-image" type="button">Use Reference Image</button>
+      </div>
+    </section>
+    <section class="pose-editor__section">
+      <div class="pose-editor__section-title">Production Pose File</div>
+      <div class="pose-editor__actions">
+        <button class="pose-editor__button" data-action="copy" type="button">Copy Pose File</button>
+        <button class="pose-editor__button pose-editor__button--primary" data-action="save" type="button">Download Pose File</button>
+      </div>
+    </section>
   `;
   const loadBaseModal = document.createElement('div');
   loadBaseModal.className = 'pose-editor-modal';
