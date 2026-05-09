@@ -100,6 +100,7 @@ type Selection =
   | { type: 'ik'; handle: IkHandle };
 
 type TransformAxis = 'x' | 'y' | 'z';
+type SelectionMode = 'joint' | 'ik';
 
 const TRANSFORM_AXES: TransformAxis[] = ['x', 'y', 'z'];
 
@@ -155,6 +156,7 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
   let ikHandles: IkHandle[] = [];
   let selected: Selection | null = null;
   let editorMode: TransformControlsMode = 'rotate';
+  let selectionMode: SelectionMode = 'joint';
   let activeAxis: TransformAxis = 'x';
   let skinnedMesh: SkinnedMesh | null = null;
   let poseLibrary = loadPoseLibrary();
@@ -278,10 +280,17 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
     pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
     pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
     raycaster.setFromCamera(pointer, camera);
-    const hits = raycaster.intersectObjects(markers.map((marker) => marker.mesh), false);
-    if (hits[0]?.object instanceof Mesh) {
-      const marker = markers.find((item) => item.mesh === hits[0].object);
-      selectJoint(marker ?? null);
+
+    if (selectionMode === 'joint') {
+      const hits = raycaster.intersectObjects(markers.map((marker) => marker.mesh), false);
+      if (hits[0]?.object instanceof Mesh) {
+        const marker = markers.find((item) => item.mesh === hits[0].object);
+        selectJoint(marker ?? null);
+        return;
+      }
+
+      clearSelection();
+      ui.status.textContent = 'Joint mode: no joint selected.';
       return;
     }
 
@@ -292,12 +301,13 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
       return;
     }
 
-    selectJoint(null);
-    ui.status.textContent = 'No joint selected.';
+    clearSelection();
+    ui.status.textContent = 'IK mode: no IK target selected.';
   }
 
   function selectJoint(marker: PoseMarker | null): void {
     selected = marker ? { type: 'joint', marker } : null;
+    selectionMode = 'joint';
     for (const item of markers) {
       const material = item.mesh.material;
       if (material instanceof MeshBasicMaterial) {
@@ -318,11 +328,12 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
 
     transformControls.attach(marker.bone);
     ui.selected.textContent = marker.bone.name;
-    ui.status.textContent = 'Rotate the selected joint. Use purple IK targets for movement.';
+    ui.status.textContent = 'Joint mode: rotate the selected joint.';
   }
 
   function selectIk(handle: IkHandle | null): void {
     selected = handle ? { type: 'ik', handle } : null;
+    selectionMode = 'ik';
     for (const marker of markers) {
       const material = marker.mesh.material;
       if (material instanceof MeshBasicMaterial) {
@@ -343,7 +354,7 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
     updateModeButtons('translate');
     transformControls.attach(handle.target);
     ui.selected.textContent = `IK ${handle.label}`;
-    ui.status.textContent = 'Move the IK target, then solve IK or fine-tune joints with rotation.';
+    ui.status.textContent = 'IK mode: move the selected target, then solve IK.';
   }
 
   function setIkHandleSelection(handle: IkHandle | null): void {
@@ -356,36 +367,54 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
     }
   }
 
+  function clearSelection(): void {
+    selected = null;
+    for (const marker of markers) {
+      const material = marker.mesh.material;
+      if (material instanceof MeshBasicMaterial) {
+        material.color.set('#114653');
+        material.opacity = 0.62;
+      }
+    }
+    setIkHandleSelection(null);
+    transformControls.detach();
+    ui.selected.textContent = 'No selection';
+  }
+
   function setMode(mode: TransformControlsMode): void {
     if (mode === 'translate') {
       transformControls.setMode('translate');
       editorMode = 'translate';
+      selectionMode = 'ik';
       updateModeButtons('translate');
       if (selected?.type === 'ik') {
         transformControls.attach(selected.handle.target);
-        ui.status.textContent = 'Move the selected IK target.';
+        ui.status.textContent = 'IK mode: move the selected IK target.';
       } else {
-        transformControls.detach();
-        ui.status.textContent = 'Move is for purple IK targets. Click a target to move it.';
+        clearSelection();
+        ui.status.textContent = 'IK mode: click a purple target to move it.';
       }
       return;
     }
 
     transformControls.setMode('rotate');
     editorMode = 'rotate';
+    selectionMode = 'joint';
     updateModeButtons('rotate');
     if (selected?.type === 'joint') {
       transformControls.attach(selected.marker.bone);
-      ui.status.textContent = 'Rotate the selected joint.';
+      ui.status.textContent = 'Joint mode: rotate the selected joint.';
     } else {
-      transformControls.detach();
-      ui.status.textContent = 'Rotate is for joints. Click a joint marker to rotate it.';
+      clearSelection();
+      ui.status.textContent = 'Joint mode: click a joint marker to rotate it.';
     }
   }
 
   function updateModeButtons(mode: TransformControlsMode): void {
     ui.rotateButton.classList.toggle('pose-editor__button--active', mode === 'rotate');
     ui.translateButton.classList.toggle('pose-editor__button--active', mode === 'translate');
+    ui.rotateButton.setAttribute('aria-pressed', String(mode === 'rotate'));
+    ui.translateButton.setAttribute('aria-pressed', String(mode === 'translate'));
   }
 
   function setActiveAxis(axis: TransformAxis): void {
@@ -1310,8 +1339,8 @@ function createPoseEditorUi(shell: HTMLElement): {
         <div class="pose-editor__selected">No selection</div>
       </div>
       <div class="pose-editor__mode">
-        <button class="pose-editor__button pose-editor__button--active" data-action="rotate" type="button">Rotate Joint</button>
-        <button class="pose-editor__button" data-action="translate" type="button">Move IK</button>
+        <button class="pose-editor__button pose-editor__button--active" data-action="rotate" type="button" aria-pressed="true">Joint Mode</button>
+        <button class="pose-editor__button" data-action="translate" type="button" aria-pressed="false">IK Mode</button>
         <button class="pose-editor__button pose-editor__button--active pose-editor__axis-button" data-axis="x" type="button">X</button>
         <button class="pose-editor__button pose-editor__axis-button" data-axis="y" type="button">Y</button>
         <button class="pose-editor__button pose-editor__axis-button" data-axis="z" type="button">Z</button>
@@ -1332,7 +1361,7 @@ function createPoseEditorUi(shell: HTMLElement): {
       <button class="pose-editor__button" data-action="copy" type="button">Copy Poses</button>
       <button class="pose-editor__button pose-editor__button--primary" data-action="save" type="button">Export Poses</button>
     </div>
-    <div class="pose-editor__status">Click a joint to rotate it, or a purple IK target to move it.</div>
+    <div class="pose-editor__status">Joint mode: click a joint to rotate it. Switch to IK mode for purple targets.</div>
   `;
   const loadBaseModal = document.createElement('div');
   loadBaseModal.className = 'pose-editor-modal';
