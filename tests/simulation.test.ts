@@ -184,6 +184,17 @@ describe('surfer pose targets', () => {
     expect(getSurferPoseTargets(rightState, 1).some((target) => target.name === 'right-lean' && target.weight > 0)).toBe(true);
   });
 
+  it('lets strong authored lean poses dominate the default stance', () => {
+    const state = createInitialSurferState();
+    state.turn = 1.25;
+    state.bank = 0.78;
+
+    const targets = getSurferPoseTargets(state, 1);
+
+    expect(targets.find((target) => target.name === 'default')?.weight).toBeLessThan(0.3);
+    expect(targets.find((target) => target.name === 'right-lean')?.weight).toBeGreaterThan(0.95);
+  });
+
   it('maps jump startup and airtime to separate pose states', () => {
     const start = createInitialSurferState();
     start.activeTrick = { name: 'Jump', timer: 0.03, duration: 0.4, score: 0, spin: 0 };

@@ -70,7 +70,6 @@ export function getSurferRenderBank(simBank: number): number {
 }
 
 export function getSurferPoseTargets(state: SurferState, time: number): RiderPoseTarget[] {
-  const targets: RiderPoseTarget[] = [{ name: DEFAULT_POSE_STATE, weight: 1 }];
   const leanLeft = clamp((Math.max(-state.turn, -state.bank * 1.2) - 0.08) / 0.95, 0, 1);
   const leanRight = clamp((Math.max(state.turn, state.bank * 1.2) - 0.08) / 0.95, 0, 1);
   const leanStrength = Math.max(leanLeft, leanRight);
@@ -83,6 +82,9 @@ export function getSurferPoseTargets(state: SurferState, time: number): RiderPos
     ? (isAirborne ? clamp(0.35 + Math.abs(state.verticalVelocity) * 0.12, 0, 0.92) : 0)
     : Math.max(isAirborne ? 0.42 : 0, smoothstep(0.2, 0.58, jumpProgress));
   const idleStrength = (1 - leanStrength) * (isAirborne ? 0 : 0.35);
+  const primaryPoseStrength = Math.max(leanStrength, startJump, airJump);
+  const defaultWeight = clamp(1 - primaryPoseStrength * 0.85, 0.15, 1);
+  const targets: RiderPoseTarget[] = [{ name: DEFAULT_POSE_STATE, weight: defaultWeight }];
 
   if (idleStrength > 0.001) {
     const idleCycle = wrapPositive(time / 3.6, IDLE_POSE_STATES.length);
@@ -94,10 +96,10 @@ export function getSurferPoseTargets(state: SurferState, time: number): RiderPos
   }
 
   if (leanLeft > 0.001) {
-    targets.push({ name: 'left-lean', weight: leanLeft * 0.9 });
+    targets.push({ name: 'left-lean', weight: leanLeft * 1.05 });
   }
   if (leanRight > 0.001) {
-    targets.push({ name: 'right-lean', weight: leanRight * 0.9 });
+    targets.push({ name: 'right-lean', weight: leanRight * 1.05 });
   }
   if (startJump > 0.001) {
     targets.push({ name: 'start-jump', weight: startJump * 1.15 });
