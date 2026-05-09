@@ -24,7 +24,6 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TransformControls, type TransformControlsMode } from 'three/examples/jsm/controls/TransformControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import {
-  CANONICAL_POSE_STATES,
   DEFAULT_POSE_STATE,
   RIDER_ASSET_URL,
   type PoseLibrary,
@@ -136,6 +135,7 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
   let skinnedMesh: SkinnedMesh | null = null;
   let poseLibrary = loadPoseLibrary();
   let activeState = poseLibrary.activeState;
+  let poseJson = '';
   let pendingHistorySnapshot: SavedPose | null = null;
   const undoStack: SavedPose[] = [];
   const redoStack: SavedPose[] = [];
@@ -145,7 +145,6 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
     scale: Vector3;
   }>();
   populateStateSelect(ui.stateSelect, poseLibrary, activeState);
-  ui.stateName.value = activeState;
   updateHistoryButtons();
 
   void loadEditorAssets().then(({ root, rider }) => {
@@ -180,32 +179,13 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
   });
   ui.stateSelect.addEventListener('change', () => {
     activeState = ui.stateSelect.value || DEFAULT_POSE_STATE;
-    ui.stateName.value = activeState;
     loadState(activeState);
   });
-  ui.stateName.addEventListener('change', () => {
-    activeState = normalizePoseStateName(ui.stateName.value);
-    ui.stateName.value = activeState;
-    populateStateSelect(ui.stateSelect, poseLibrary, activeState);
-    updateOutput();
-  });
   ui.saveStateButton.addEventListener('click', saveState);
-  ui.loadStateButton.addEventListener('click', () => loadState(currentStateName()));
   ui.resetSelectedButton.addEventListener('click', resetSelected);
   ui.resetAllButton.addEventListener('click', resetAll);
   ui.saveButton.addEventListener('click', savePose);
   ui.copyButton.addEventListener('click', copyPose);
-  for (const button of ui.statePresetButtons) {
-    button.addEventListener('click', () => {
-      const stateName = button.dataset.statePreset;
-      if (!stateName) {
-        return;
-      }
-      activeState = normalizePoseStateName(stateName);
-      ui.stateName.value = activeState;
-      loadState(activeState);
-    });
-  }
   transformControls.addEventListener('mouseDown', () => {
     pendingHistorySnapshot = captureCurrentPose();
   });
@@ -380,13 +360,12 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
   }
 
   function updateOutput(): void {
-    ui.output.value = JSON.stringify(createPoseLibrarySnapshot(
+    poseJson = JSON.stringify(createPoseLibrarySnapshot(
       poseLibrary,
       currentStateName(),
       markers,
       ikHandles,
     ), null, 2);
-    updatePresetButtons();
   }
 
   function solveIk(): void {
@@ -407,7 +386,7 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
 
     new CCDIKSolver(skinnedMesh, iks).update();
     updateMarkers(markers);
-    ui.status.textContent = 'IK solved. Save or copy the JSON when it looks right.';
+    ui.status.textContent = 'IK solved. Save or export the pose when it looks right.';
     updateOutput();
   }
 
@@ -425,7 +404,7 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
 
   function savePose(): void {
     updateOutput();
-    const blob = new Blob([ui.output.value], { type: 'application/json' });
+    const blob = new Blob([poseJson], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
@@ -437,11 +416,10 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
 
   function copyPose(): void {
     updateOutput();
-    void navigator.clipboard.writeText(ui.output.value).then(() => {
+    void navigator.clipboard.writeText(poseJson).then(() => {
       ui.status.textContent = 'Pose JSON copied.';
     }).catch(() => {
-      ui.output.select();
-      ui.status.textContent = 'Select and copy the JSON.';
+      ui.status.textContent = 'Clipboard blocked. Use Export Poses instead.';
     });
   }
 
@@ -450,9 +428,7 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
     poseLibrary = createPoseLibrarySnapshot(poseLibrary, activeState, markers, ikHandles);
     savePoseLibrary(poseLibrary);
     populateStateSelect(ui.stateSelect, poseLibrary, activeState);
-    ui.stateName.value = activeState;
     ui.status.textContent = `Saved current pose to "${activeState}".`;
-    updatePresetButtons();
     updateOutput();
   }
 
@@ -460,9 +436,7 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
     const normalized = normalizePoseStateName(stateName);
     const pose = poseLibrary.states[normalized];
     activeState = normalized;
-    ui.stateName.value = normalized;
     populateStateSelect(ui.stateSelect, poseLibrary, normalized);
-    updatePresetButtons();
 
     if (!pose) {
       ui.status.textContent = `No saved "${normalized}" pose yet. Current edit will save there.`;
@@ -478,7 +452,7 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
   }
 
   function currentStateName(): string {
-    return normalizePoseStateName(ui.stateName.value || ui.stateSelect.value || activeState);
+    return normalizePoseStateName(ui.stateSelect.value || activeState);
   }
 
   function captureCurrentPose(): SavedPose | null {
@@ -541,12 +515,6 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
   function updateHistoryButtons(): void {
     ui.undoButton.disabled = undoStack.length === 0;
     ui.redoButton.disabled = redoStack.length === 0;
-  }
-
-  function updatePresetButtons(): void {
-    for (const button of ui.statePresetButtons) {
-      button.classList.toggle('pose-editor__button--active', button.dataset.statePreset === activeState);
-    }
   }
 
   function onKeyDown(event: KeyboardEvent): void {
@@ -990,9 +958,7 @@ function createPoseEditorUi(shell: HTMLElement): {
   panel: HTMLElement;
   selected: HTMLElement;
   status: HTMLElement;
-  output: HTMLTextAreaElement;
   stateSelect: HTMLSelectElement;
-  stateName: HTMLInputElement;
   rotateButton: HTMLButtonElement;
   translateButton: HTMLButtonElement;
   undoButton: HTMLButtonElement;
@@ -1000,12 +966,10 @@ function createPoseEditorUi(shell: HTMLElement): {
   solveIkButton: HTMLButtonElement;
   syncIkButton: HTMLButtonElement;
   saveStateButton: HTMLButtonElement;
-  loadStateButton: HTMLButtonElement;
   resetSelectedButton: HTMLButtonElement;
   resetAllButton: HTMLButtonElement;
   saveButton: HTMLButtonElement;
   copyButton: HTMLButtonElement;
-  statePresetButtons: HTMLButtonElement[];
 } {
   const panel = document.createElement('section');
   panel.className = 'pose-editor';
@@ -1024,25 +988,17 @@ function createPoseEditorUi(shell: HTMLElement): {
     </div>
     <div class="pose-editor__state">
       <select class="pose-editor__select" data-role="state-select" aria-label="Pose state"></select>
-      <input class="pose-editor__input" data-role="state-name" aria-label="Pose state name" value="default" />
       <button class="pose-editor__button pose-editor__button--active" data-action="save-state" type="button">Save State</button>
-      <button class="pose-editor__button" data-action="load-state" type="button">Load State</button>
-    </div>
-    <div class="pose-editor__presets" aria-label="Pose presets">
-      ${CANONICAL_POSE_STATES.map((name) => (
-        `<button class="pose-editor__button" data-state-preset="${name}" type="button">${name}</button>`
-      )).join('')}
     </div>
     <div class="pose-editor__actions">
       <button class="pose-editor__button" data-action="solve-ik" type="button">Solve IK</button>
       <button class="pose-editor__button" data-action="sync-ik" type="button">Sync IK</button>
       <button class="pose-editor__button" data-action="reset-selected" type="button">Reset Joint</button>
       <button class="pose-editor__button" data-action="reset-all" type="button">Reset All</button>
-      <button class="pose-editor__button" data-action="copy" type="button">Copy JSON</button>
-      <button class="pose-editor__button pose-editor__button--primary" data-action="save" type="button">Export JSON</button>
+      <button class="pose-editor__button" data-action="copy" type="button">Copy Poses</button>
+      <button class="pose-editor__button pose-editor__button--primary" data-action="save" type="button">Export Poses</button>
     </div>
     <div class="pose-editor__status">Click a joint marker, then drag the widget.</div>
-    <textarea class="pose-editor__output" spellcheck="false"></textarea>
   `;
   shell.append(panel);
 
@@ -1050,9 +1006,7 @@ function createPoseEditorUi(shell: HTMLElement): {
     panel,
     selected: panel.querySelector('.pose-editor__selected') as HTMLElement,
     status: panel.querySelector('.pose-editor__status') as HTMLElement,
-    output: panel.querySelector('.pose-editor__output') as HTMLTextAreaElement,
     stateSelect: panel.querySelector('[data-role="state-select"]') as HTMLSelectElement,
-    stateName: panel.querySelector('[data-role="state-name"]') as HTMLInputElement,
     rotateButton: panel.querySelector('[data-action="rotate"]') as HTMLButtonElement,
     translateButton: panel.querySelector('[data-action="translate"]') as HTMLButtonElement,
     undoButton: panel.querySelector('[data-action="undo"]') as HTMLButtonElement,
@@ -1060,11 +1014,9 @@ function createPoseEditorUi(shell: HTMLElement): {
     solveIkButton: panel.querySelector('[data-action="solve-ik"]') as HTMLButtonElement,
     syncIkButton: panel.querySelector('[data-action="sync-ik"]') as HTMLButtonElement,
     saveStateButton: panel.querySelector('[data-action="save-state"]') as HTMLButtonElement,
-    loadStateButton: panel.querySelector('[data-action="load-state"]') as HTMLButtonElement,
     resetSelectedButton: panel.querySelector('[data-action="reset-selected"]') as HTMLButtonElement,
     resetAllButton: panel.querySelector('[data-action="reset-all"]') as HTMLButtonElement,
     saveButton: panel.querySelector('[data-action="save"]') as HTMLButtonElement,
     copyButton: panel.querySelector('[data-action="copy"]') as HTMLButtonElement,
-    statePresetButtons: Array.from(panel.querySelectorAll('[data-state-preset]')) as HTMLButtonElement[],
   };
 }
