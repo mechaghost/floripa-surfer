@@ -141,7 +141,6 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
   let editorMode: TransformControlsMode = 'rotate';
   let activeAxis: TransformAxis = 'x';
   let skinnedMesh: SkinnedMesh | null = null;
-  let riderRoot: Object3D | null = null;
   let poseLibrary = loadPoseLibrary();
   let activeState = poseLibrary.activeState;
   let poseJson = '';
@@ -158,7 +157,6 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
 
   void loadEditorAssets().then(({ root, rider }) => {
     scene.add(root);
-    riderRoot = rider;
     basePose = captureBasePose(rider);
     skinnedMesh = findFirstSkinnedMesh(rider);
     markers = createBoneMarkers(rider, markerRoot);
@@ -511,8 +509,6 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
 
     const before = recordHistory ? captureCurrentPose() : null;
     applySavedPose(pose, markers, ikHandles);
-    const snapOffsetY = snapRiderToDeck();
-    offsetIkTargetsY(snapOffsetY);
     commitHistorySnapshot(before);
     ui.status.textContent = `Loaded "${normalized}".`;
     updateOutput();
@@ -562,32 +558,12 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
 
     const before = captureCurrentPose();
     applySavedPose(pose, markers, ikHandles);
-    const snapOffsetY = snapRiderToDeck();
-    offsetIkTargetsY(snapOffsetY);
     activeState = targetState;
     ui.stateSelect.value = targetState;
     commitHistorySnapshot(before);
     ui.status.textContent = `Loaded "${sourceState}" as base for "${targetState}".`;
     updateOutput();
     closeLoadBaseModal();
-  }
-
-  function snapRiderToDeck(): number {
-    if (!riderRoot) {
-      return 0;
-    }
-
-    return snapFeetToDeck(riderRoot, BOARD_DECK_Y);
-  }
-
-  function offsetIkTargetsY(offsetY: number): void {
-    if (Math.abs(offsetY) < 0.0001) {
-      return;
-    }
-
-    for (const handle of ikHandles) {
-      handle.target.position.y += offsetY;
-    }
   }
 
   function currentStateName(): string {
@@ -882,7 +858,7 @@ function estimateBoardHullBottom(model: Object3D, fallbackY: number): number {
   return yValues[hullIndex];
 }
 
-function snapFeetToDeck(model: Object3D, deckY: number): number {
+function snapFeetToDeck(model: Object3D, deckY: number): void {
   model.updateMatrixWorld(true);
   const box = new Box3();
   let hasFootBounds = false;
@@ -898,9 +874,7 @@ function snapFeetToDeck(model: Object3D, deckY: number): number {
     box.setFromObject(model);
   }
 
-  const offsetY = deckY - FOOT_DECK_SINK - box.min.y;
-  model.position.y += offsetY;
-  return offsetY;
+  model.position.y += deckY - FOOT_DECK_SINK - box.min.y;
 }
 
 function tintRiderForSurf(model: Object3D): void {

@@ -371,12 +371,12 @@ function prepareRider(model: Object3D, animations: AnimationClip[]): PreparedRid
   wrapper.add(model);
   tintRiderForSurf(model);
   applyAnimationPose(model, animations);
+  snapFeetToDeck(model, BOARD_DECK_Y);
   const poseLibrary = loadPoseLibrary();
   const defaultPose = poseLibrary.states[DEFAULT_POSE_STATE];
   if (defaultPose) {
     applySavedPoseToObject(defaultPose, model);
   }
-  snapFeetToDeck(model, BOARD_DECK_Y);
   return { wrapper, poseRoot: model, poseLibrary };
 }
 
