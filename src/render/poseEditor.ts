@@ -46,6 +46,7 @@ const KEYBOARD_ROTATION_STEP = 0.035;
 const KEYBOARD_MOVE_STEP = 0.025;
 const IK_REACH_MARGIN = 1.06;
 const IK_REACH_PADDING = 0.04;
+const BODY_HEIGHT_MIN_FOOT_CLEARANCE = 0.42;
 const REFERENCE_POSE_DEPTH_SCALE = 0.28;
 const REFERENCE_POSE_MIN_VISIBILITY = 0.28;
 const MEDIAPIPE_TASKS_VERSION = '0.10.35';
@@ -113,6 +114,7 @@ type IkHandle = {
   drivenBone?: Object3D;
   reachRoot?: Object3D;
   maxReach?: number;
+  solveMode?: 'chain' | 'body-height';
 };
 
 type Selection =
@@ -149,7 +151,7 @@ const TRANSFORM_AXES: TransformAxis[] = ['x', 'y', 'z'];
 const POSE_CAMERA_PRESETS: PoseCameraPreset[] = ['iso', 'left', 'right', 'top', 'down'];
 const REFERENCE_TARGET_LANDMARKS: Record<string, number[]> = {
   Head: [0],
-  Torso: [11, 12, 23, 24],
+  'Body Height': [23, 24],
   'Left Hand': [15],
   'Right Hand': [16],
   'Left Knee': [25],
@@ -241,6 +243,7 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
     skinnedMesh = findFirstSkinnedMesh(rider);
     markers = createBoneMarkers(rider, markerRoot);
     ikHandles = skinnedMesh ? createIkHandles(rider, ikRoot) : [];
+    populateIkTargetSelect(ui.ikTargetSelect, ikHandles);
     selectJoint(markers.find((marker) => marker.bone.name === 'Hips') ?? markers[0] ?? null);
     loadState(activeState, false);
     updateOutput();
@@ -271,6 +274,10 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
     const before = captureCurrentPose();
     syncIkTargets();
     commitHistorySnapshot(before);
+  });
+  ui.ikTargetSelect.addEventListener('change', () => {
+    const handle = ikHandles.find((item) => item.label === ui.ikTargetSelect.value) ?? null;
+    selectIk(handle);
   });
   ui.stateSelect.addEventListener('change', () => {
     activeState = ui.stateSelect.value || DEFAULT_POSE_STATE;
@@ -439,6 +446,7 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
     if (!handle) {
       transformControls.detach();
       ui.selected.textContent = 'No selection';
+      ui.ikTargetSelect.value = '';
       return;
     }
 
@@ -447,6 +455,7 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
     updateModeButtons('translate');
     transformControls.attach(handle.target);
     ui.selected.textContent = `IK ${handle.label}`;
+    ui.ikTargetSelect.value = handle.label;
     ui.status.textContent = 'IK mode: move the selected target, then solve IK.';
   }
 
@@ -472,6 +481,7 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
     setIkHandleSelection(null);
     transformControls.detach();
     ui.selected.textContent = 'No selection';
+    ui.ikTargetSelect.value = '';
   }
 
   function updateModeVisibility(): void {
@@ -616,12 +626,16 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
   }
 
   function solveIk(handles = ikHandles): boolean {
+    const chainHandles = handles.filter((handle) => handle.solveMode !== 'body-height');
     if (!skinnedMesh || ikHandles.length === 0) {
       return false;
     }
+    if (chainHandles.length === 0) {
+      return false;
+    }
 
-    const clamped = clampIkTargetsToReach(handles);
-    const iks = handles.map((handle): IK => {
+    const clamped = clampIkTargetsToReach(chainHandles);
+    const iks = chainHandles.map((handle): IK => {
       const mesh = skinnedMesh as SkinnedMesh;
       return {
         target: ensureSkeletonIndex(mesh, handle.target),
@@ -633,7 +647,7 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
     });
 
     new CCDIKSolver(skinnedMesh, iks).update();
-    updateDrivenBonesFromTargets(handles);
+    updateDrivenBonesFromTargets(chainHandles);
     updateMarkers(markers);
     ui.status.textContent = clamped
       ? 'IK solved with unreachable target clamped to limb reach.'
@@ -643,8 +657,8 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
   }
 
   function solveSelectedIk(handle: IkHandle): boolean {
-    if (handle.label === 'Torso') {
-      return solveTorsoBodyIk(handle);
+    if (handle.solveMode === 'body-height') {
+      return solveBodyHeightIk(handle);
     }
 
     const clamped = solveIk([handle]);
@@ -654,29 +668,55 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
     return clamped;
   }
 
-  function solveTorsoBodyIk(handle: IkHandle): boolean {
-    if (!handle.reachRoot) {
-      return solveIk([handle]);
-    }
-
+  function solveBodyHeightIk(handle: IkHandle): boolean {
+    const footHandles = ikHandles.filter((item) => item.label === 'Left Foot' || item.label === 'Right Foot');
     const targetWorld = getObjectWorldPosition(handle.target);
-    const effectorWorld = getObjectWorldPosition(handle.effector);
-    const rootWorld = getObjectWorldPosition(handle.reachRoot);
-    const delta = targetWorld.sub(effectorWorld);
+    const requestedY = targetWorld.y;
+    const maxFootY = footHandles.reduce((highest, footHandle) => {
+      const footWorld = getObjectWorldPosition(footHandle.target);
+      return Math.max(highest, footWorld.y);
+    }, -Infinity);
 
-    if (delta.lengthSq() > 0.000001) {
-      setObjectWorldPosition(handle.reachRoot, rootWorld.add(delta));
+    if (Number.isFinite(maxFootY)) {
+      targetWorld.y = Math.max(targetWorld.y, maxFootY + BODY_HEIGHT_MIN_FOOT_CLEARANCE);
     }
 
-    const plantedFootHandles = ikHandles.filter((item) => item.label === 'Left Foot' || item.label === 'Right Foot');
-    const clamped = plantedFootHandles.length > 0 ? solveIk(plantedFootHandles) : false;
-    syncDependentIkTargets(handle);
+    setObjectWorldPosition(handle.effector, targetWorld);
+    syncIkTarget(handle);
+    const clamped = solveIkWithoutTargetClamp(footHandles);
+    syncDependentIkTargets(handle, new Set(footHandles));
     updateMarkers(markers);
     updateOutput();
     ui.status.textContent = clamped
-      ? 'Torso lowered with planted feet; foot targets were clamped to limb reach.'
-      : 'Torso lowered with planted feet.';
-    return clamped;
+      ? 'Body height moved with planted feet; leg reach is at its limit.'
+      : 'Body height moved with planted feet.';
+    return clamped || Math.abs(targetWorld.y - requestedY) > 0.0001;
+  }
+
+  function solveIkWithoutTargetClamp(handles: IkHandle[]): boolean {
+    if (!skinnedMesh || handles.length === 0) {
+      return false;
+    }
+
+    const chainHandles = handles.filter((handle) => handle.solveMode !== 'body-height');
+    if (chainHandles.length === 0) {
+      return false;
+    }
+
+    const iks = chainHandles.map((handle): IK => {
+      const mesh = skinnedMesh as SkinnedMesh;
+      return {
+        target: ensureSkeletonIndex(mesh, handle.target),
+        effector: ensureSkeletonIndex(mesh, handle.effector),
+        links: handle.links.map((link) => createLimitedIkLink(mesh, link)),
+        iteration: 18,
+        blendFactor: 1,
+      };
+    });
+
+    new CCDIKSolver(skinnedMesh, iks).update();
+    updateDrivenBonesFromTargets(chainHandles);
+    return false;
   }
 
   function createLimitedIkLink(mesh: SkinnedMesh, link: Object3D): IK['links'][number] {
@@ -750,9 +790,13 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
     ui.status.textContent = 'IK handles synced to the current pose.';
   }
 
-  function syncDependentIkTargets(parentHandle: IkHandle): void {
+  function syncDependentIkTargets(parentHandle: IkHandle, excludedHandles = new Set<IkHandle>()): void {
     for (const handle of ikHandles) {
-      if (handle === parentHandle || !isPoseIkTargetDependent(parentHandle.effector, handle.drivenBone ?? handle.effector)) {
+      if (
+        handle === parentHandle ||
+        excludedHandles.has(handle) ||
+        !isPoseIkTargetDependent(parentHandle.effector, handle.drivenBone ?? handle.effector)
+      ) {
         continue;
       }
 
@@ -1003,10 +1047,10 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
       return 0;
     }
 
-    const referenceCenter = points.get('Torso') ?? referenceBounds.center;
-    const torsoHandle = ikHandles.find((handle) => handle.label === 'Torso');
-    const worldCenter = torsoHandle
-      ? getObjectWorldPosition(torsoHandle.target)
+    const referenceCenter = points.get('Body Height') ?? referenceBounds.center;
+    const bodyHeightHandle = ikHandles.find((handle) => handle.label === 'Body Height');
+    const worldCenter = bodyHeightHandle
+      ? getObjectWorldPosition(bodyHeightHandle.target)
       : worldBounds.center;
     const scale = worldBounds.height / Math.max(referenceBounds.height, 0.001);
     const horizontalAxis = imageView === 'side'
@@ -1127,13 +1171,21 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
     }
 
     const amount = sign * KEYBOARD_MOVE_STEP * multiplier;
-    selected.handle.target.position[activeAxis] += amount;
-    const clamped = solveSelectedIk(selected.handle);
+    const handle = selected.handle;
+    handle.target.position[activeAxis] += amount;
+    const clamped = solveSelectedIk(handle);
     commitHistorySnapshot(before);
     updateOutput();
+    if (handle.solveMode === 'body-height') {
+      ui.status.textContent = clamped
+        ? `Moved IK ${handle.label} on ${activeAxis.toUpperCase()} and kept above foot clearance.`
+        : `Moved IK ${handle.label} on ${activeAxis.toUpperCase()}.`;
+      return;
+    }
+
     ui.status.textContent = clamped
-      ? `Moved IK ${selected.handle.label} on ${activeAxis.toUpperCase()} and clamped to limb reach.`
-      : `Moved IK ${selected.handle.label} on ${activeAxis.toUpperCase()}.`;
+      ? `Moved IK ${handle.label} on ${activeAxis.toUpperCase()} and clamped to limb reach.`
+      : `Moved IK ${handle.label} on ${activeAxis.toUpperCase()}.`;
   }
 
   function onKeyDown(event: KeyboardEvent): void {
@@ -1455,7 +1507,7 @@ function createIkHandles(rider: Object3D, ikRoot: Group): IkHandle[] {
 
   const specs = [
     { label: 'Head', effector: 'Head', links: ['Neck', 'Torso'], reachRoot: 'Torso' },
-    { label: 'Torso', effector: 'Torso', links: ['Abdomen', 'Hips'], reachRoot: 'Hips' },
+    { label: 'Body Height', effector: 'Hips', links: [], reachRoot: 'Hips', solveMode: 'body-height' as const },
     { label: 'Left Hand', effector: 'PalmL', links: ['LowerArmL', 'UpperArmL'], reachRoot: 'UpperArmL' },
     { label: 'Right Hand', effector: 'PalmR', links: ['LowerArmR', 'UpperArmR'], reachRoot: 'UpperArmR' },
     { label: 'Left Knee', effector: 'LowerLegL', links: ['UpperLegL'], reachRoot: 'UpperLegL' },
@@ -1492,6 +1544,7 @@ function createIkHandles(rider: Object3D, ikRoot: Group): IkHandle[] {
       links: links as Object3D[],
       drivenBone,
       reachRoot,
+      solveMode: spec.solveMode ?? 'chain',
     };
     syncIkTargetToSource(handle);
     handle.maxReach = estimateIkReach(handle);
@@ -1824,6 +1877,22 @@ function populateStateSelect(select: HTMLSelectElement, library: PoseLibrary, ac
   }));
 }
 
+function populateIkTargetSelect(select: HTMLSelectElement, ikHandles: IkHandle[]): void {
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = 'Choose IK Target';
+  select.replaceChildren(
+    placeholder,
+    ...ikHandles.map((handle) => {
+      const option = document.createElement('option');
+      option.value = handle.label;
+      option.textContent = handle.label;
+      return option;
+    }),
+  );
+  select.value = '';
+}
+
 function applySavedPose(pose: SavedPose, markers: PoseMarker[], ikHandles: IkHandle[]): void {
   for (const marker of markers) {
     const saved = pose.bones[marker.bone.name];
@@ -1898,6 +1967,7 @@ function createPoseEditorUi(shell: HTMLElement): {
   referenceApplyButton: HTMLButtonElement;
   referenceCancelButton: HTMLButtonElement;
   referenceCloseButton: HTMLButtonElement;
+  ikTargetSelect: HTMLSelectElement;
   solveIkButton: HTMLButtonElement;
   syncIkButton: HTMLButtonElement;
   saveStateButton: HTMLButtonElement;
@@ -1956,6 +2026,12 @@ function createPoseEditorUi(shell: HTMLElement): {
     </section>
     <section class="pose-editor__section">
       <div class="pose-editor__section-title">IK Tools</div>
+      <label class="pose-editor__field">
+        <span>IK Target</span>
+        <select class="pose-editor__select" data-role="ik-target-select" aria-label="IK target">
+          <option value="">Choose IK Target</option>
+        </select>
+      </label>
       <div class="pose-editor__actions">
         <button class="pose-editor__button" data-action="solve-ik" type="button">Solve IK</button>
         <button class="pose-editor__button" data-action="sync-ik" type="button">Sync Targets</button>
@@ -2070,6 +2146,7 @@ function createPoseEditorUi(shell: HTMLElement): {
     referenceApplyButton: referenceModal.querySelector('[data-action="reference-apply"]') as HTMLButtonElement,
     referenceCancelButton: referenceModal.querySelector('[data-action="reference-cancel"]') as HTMLButtonElement,
     referenceCloseButton: referenceModal.querySelector('[data-action="reference-close"]') as HTMLButtonElement,
+    ikTargetSelect: panel.querySelector('[data-role="ik-target-select"]') as HTMLSelectElement,
     solveIkButton: panel.querySelector('[data-action="solve-ik"]') as HTMLButtonElement,
     syncIkButton: panel.querySelector('[data-action="sync-ik"]') as HTMLButtonElement,
     saveStateButton: panel.querySelector('[data-action="save-state"]') as HTMLButtonElement,
