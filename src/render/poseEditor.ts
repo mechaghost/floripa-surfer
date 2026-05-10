@@ -2053,7 +2053,6 @@ function createPoseEditorUi(shell: HTMLElement): {
     <section class="pose-editor__section">
       <div class="pose-editor__section-title">IK Tools</div>
       <label class="pose-editor__field">
-        <span>Target</span>
         <select class="pose-editor__select" data-role="ik-target-select" aria-label="IK target">
           <option value="">Choose IK Target</option>
         </select>
