@@ -2017,8 +2017,8 @@ function createPoseEditorUi(shell: HTMLElement): {
       <div class="pose-editor__section-title">Pose State</div>
       <div class="pose-editor__state">
         <select class="pose-editor__select" data-role="state-select" aria-label="Pose state"></select>
-        <button class="pose-editor__button" data-action="load-base" type="button">Load Base Pose</button>
-        <button class="pose-editor__button pose-editor__button--active" data-action="save-state" type="button">Save Local State</button>
+        <button class="pose-editor__button" data-action="load-base" type="button">Load Base</button>
+        <button class="pose-editor__button pose-editor__button--active" data-action="save-state" type="button">Save State</button>
       </div>
     </section>
     <section class="pose-editor__section">
@@ -2053,22 +2053,22 @@ function createPoseEditorUi(shell: HTMLElement): {
     <section class="pose-editor__section">
       <div class="pose-editor__section-title">IK Tools</div>
       <label class="pose-editor__field">
-        <span>IK Target</span>
+        <span>Target</span>
         <select class="pose-editor__select" data-role="ik-target-select" aria-label="IK target">
           <option value="">Choose IK Target</option>
         </select>
       </label>
       <div class="pose-editor__actions">
         <button class="pose-editor__button" data-action="solve-ik" type="button">Solve IK</button>
-        <button class="pose-editor__button" data-action="sync-ik" type="button">Sync Targets</button>
+        <button class="pose-editor__button" data-action="sync-ik" type="button">Sync</button>
         <button class="pose-editor__button" data-action="reset-selected" type="button">Reset</button>
         <button class="pose-editor__button" data-action="reset-all" type="button">Reset Rig</button>
       </div>
     </section>
     <section class="pose-editor__section pose-editor__section--wide">
-      <div class="pose-editor__section-title">Sources and File</div>
+      <div class="pose-editor__section-title">File</div>
       <div class="pose-editor__actions pose-editor__actions--compact">
-        <button class="pose-editor__button" data-action="reference-image" type="button">Use Reference Image</button>
+        <button class="pose-editor__button" data-action="reference-image" type="button">Reference</button>
         <button class="pose-editor__button" data-action="copy" type="button">Copy File</button>
         <button class="pose-editor__button pose-editor__button--primary" data-action="save" type="button">Save Git File</button>
       </div>

@@ -51,15 +51,15 @@ canvas {
 
 .pose-editor {
   position: absolute;
-  top: max(14px, env(safe-area-inset-top));
-  right: max(14px, env(safe-area-inset-right));
+  top: max(10px, env(safe-area-inset-top));
+  right: max(10px, env(safe-area-inset-right));
   z-index: 5;
-  width: min(520px, calc(100vw - 28px));
-  max-height: calc(100vh - 28px);
+  width: min(370px, calc(100vw - 20px));
+  max-height: calc(100vh - 20px);
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px 10px;
-  padding: 12px;
+  grid-template-columns: 1fr;
+  gap: 5px;
+  padding: 8px;
   border: 1px solid rgba(255, 255, 255, 0.3);
   background: rgba(7, 39, 48, 0.82);
   color: rgba(255, 255, 255, 0.92);
@@ -72,13 +72,13 @@ canvas {
   grid-column: 1 / -1;
   display: flex;
   justify-content: space-between;
-  gap: 12px;
-  align-items: flex-start;
+  gap: 8px;
+  align-items: center;
 }
 
 .pose-editor__eyebrow {
-  margin-bottom: 7px;
-  font-size: 0.68rem;
+  margin-bottom: 2px;
+  font-size: 0.58rem;
   font-weight: 850;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -88,7 +88,7 @@ canvas {
 .pose-editor__label,
 .pose-editor__section-title,
 .pose-editor__inline-label {
-  font-size: 0.65rem;
+  font-size: 0.58rem;
   font-weight: 850;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -96,21 +96,31 @@ canvas {
 }
 
 .pose-editor__selected {
-  min-height: 22px;
-  font-size: 0.96rem;
+  min-height: 16px;
+  font-size: 0.84rem;
   font-weight: 850;
 }
 
 .pose-editor__section {
   min-width: 0;
   display: grid;
-  gap: 6px;
-  padding-top: 8px;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 5px 7px;
+  align-items: center;
+  padding-top: 5px;
   border-top: 1px solid rgba(255, 255, 255, 0.14);
 }
 
 .pose-editor__section--wide {
-  grid-column: 1 / -1;
+  grid-column: auto;
+}
+
+.pose-editor__section-title {
+  align-self: center;
+}
+
+.pose-editor__section > :not(.pose-editor__section-title) {
+  grid-column: 2;
 }
 
 .pose-editor__mode,
@@ -121,14 +131,15 @@ canvas {
 .pose-editor__camera-bar,
 .pose-editor__axis-buttons {
   display: flex;
-  gap: 6px;
+  gap: 4px;
   flex-wrap: wrap;
   align-items: center;
 }
 
 .pose-editor__state {
   display: grid;
-  grid-template-columns: minmax(130px, 1fr) auto auto;
+  grid-template-columns: minmax(96px, 1fr) auto auto;
+  gap: 4px;
   align-items: center;
 }
 
@@ -150,9 +161,11 @@ canvas {
 
 .pose-editor__field {
   display: grid;
-  gap: 5px;
+  grid-template-columns: 40px minmax(0, 1fr);
+  gap: 4px;
+  align-items: center;
   max-width: none;
-  font-size: 0.65rem;
+  font-size: 0.58rem;
   font-weight: 850;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -167,24 +180,24 @@ canvas {
 
 .pose-editor__select {
   min-width: 0;
-  min-height: 30px;
+  min-height: 25px;
   border: 1px solid rgba(255, 255, 255, 0.28);
   background: rgba(0, 18, 24, 0.34);
   color: rgba(255, 255, 255, 0.92);
-  padding: 0 9px;
+  padding: 0 7px;
   font: inherit;
-  font-size: 0.74rem;
+  font-size: 0.68rem;
   font-weight: 760;
 }
 
 .pose-editor__button {
-  min-height: 30px;
-  padding: 0 9px;
+  min-height: 25px;
+  padding: 0 7px;
   border: 1px solid rgba(255, 255, 255, 0.28);
   background: rgba(255, 255, 255, 0.1);
   color: rgba(255, 255, 255, 0.9);
   font: inherit;
-  font-size: 0.74rem;
+  font-size: 0.68rem;
   font-weight: 800;
   white-space: nowrap;
   cursor: pointer;
@@ -213,27 +226,27 @@ canvas {
 }
 
 .pose-editor__button--icon {
-  width: 30px;
+  width: 26px;
   padding: 0;
   text-align: center;
 }
 
 .pose-editor__button--wide-icon {
-  width: 38px;
+  width: 32px;
 }
 
 .pose-editor__axis-button {
-  width: 30px;
+  width: 26px;
   padding: 0;
 }
 
 .pose-editor__status {
   grid-column: 1 / -1;
-  min-height: 28px;
-  padding: 7px 9px;
+  min-height: 22px;
+  padding: 5px 7px;
   border-left: 3px solid rgba(255, 239, 92, 0.58);
   background: rgba(0, 18, 24, 0.24);
-  font-size: 0.74rem;
+  font-size: 0.66rem;
   line-height: 1.25;
   color: rgba(223, 250, 255, 0.84);
 }
@@ -348,22 +361,18 @@ canvas {
   }
 }
 
-@media (max-width: 720px) {
+@media (max-width: 560px) {
   .pose-editor {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
     top: auto;
     left: max(10px, env(safe-area-inset-left));
     right: max(10px, env(safe-area-inset-right));
     bottom: max(10px, env(safe-area-inset-bottom));
     width: auto;
-    max-height: 62vh;
-    padding: 11px;
+    max-height: 56vh;
     overflow: auto;
   }
 
   .pose-editor__header,
-  .pose-editor__section:first-of-type,
-  .pose-editor__section--wide,
   .pose-editor__status {
     grid-column: 1 / -1;
   }
@@ -373,13 +382,17 @@ canvas {
   }
 }
 
-@media (max-width: 520px) {
+@media (max-width: 430px) {
   .pose-editor {
     grid-template-columns: 1fr;
   }
 
   .pose-editor__section {
-    grid-column: 1 / -1;
+    grid-template-columns: 1fr;
+  }
+
+  .pose-editor__section > :not(.pose-editor__section-title) {
+    grid-column: 1;
   }
 
   .pose-editor__state {
