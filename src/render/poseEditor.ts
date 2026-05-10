@@ -307,7 +307,9 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
   ui.saveStateButton.addEventListener('click', saveState);
   ui.resetSelectedButton.addEventListener('click', resetSelected);
   ui.resetAllButton.addEventListener('click', resetAll);
-  ui.saveButton.addEventListener('click', savePose);
+  ui.saveButton.addEventListener('click', () => {
+    void savePose();
+  });
   ui.copyButton.addEventListener('click', copyPose);
   transformControls.addEventListener('mouseDown', () => {
     pendingHistorySnapshot = captureCurrentPose();
@@ -564,6 +566,8 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
     }
     ui.projectionButton.classList.toggle('pose-editor__button--active', cameraProjection === 'orthographic');
     ui.projectionButton.setAttribute('aria-pressed', String(cameraProjection === 'orthographic'));
+    ui.projectionButton.textContent = cameraProjection === 'orthographic' ? '2D' : '3D';
+    ui.projectionButton.title = cameraProjection === 'orthographic' ? 'Orthographic camera' : 'Perspective camera';
   }
 
   function setActiveAxis(axis: TransformAxis): void {
@@ -810,8 +814,30 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
     syncSource.getWorldPosition(handle.target.position);
   }
 
-  function savePose(): void {
+  async function savePose(): Promise<void> {
     updateOutput();
+    try {
+      const response = await fetch('/__floripa/pose-library', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: poseJson,
+      });
+
+      if (!response.ok) {
+        throw new Error('Pose file endpoint unavailable.');
+      }
+
+      ui.status.textContent = 'Production pose file saved to src/data/defaultPoseLibrary.json.';
+      return;
+    } catch (error) {
+      console.warn('Pose file save endpoint failed; falling back to download.', error);
+    }
+
+    downloadPoseFile();
+    ui.status.textContent = 'Dev save unavailable. Downloaded defaultPoseLibrary.json instead.';
+  }
+
+  function downloadPoseFile(): void {
     const blob = new Blob([poseJson], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -819,15 +845,14 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
     link.download = 'defaultPoseLibrary.json';
     link.click();
     URL.revokeObjectURL(url);
-    ui.status.textContent = 'Production pose file downloaded. Replace src/data/defaultPoseLibrary.json and commit.';
   }
 
   function copyPose(): void {
     updateOutput();
     void navigator.clipboard.writeText(poseJson).then(() => {
-      ui.status.textContent = 'Production pose JSON copied. Save it to src/data/defaultPoseLibrary.json and commit.';
+      ui.status.textContent = 'Production pose JSON copied.';
     }).catch(() => {
-      ui.status.textContent = 'Clipboard blocked. Use Download Pose File instead.';
+      ui.status.textContent = 'Clipboard blocked. Use Save Git File instead.';
     });
   }
 
@@ -836,7 +861,7 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
     poseLibrary = createPoseLibrarySnapshot(poseLibrary, activeState, markers, ikHandles);
     savePoseLibrary(poseLibrary);
     populateStateSelect(ui.stateSelect, poseLibrary, activeState);
-    ui.status.textContent = `Saved "${activeState}" in this browser. Export poses to update the bundled git file.`;
+    ui.status.textContent = `Saved "${activeState}" locally. Use Save Git File to update the bundled pose file.`;
     updateOutput();
   }
 
@@ -1997,31 +2022,32 @@ function createPoseEditorUi(shell: HTMLElement): {
       </div>
     </section>
     <section class="pose-editor__section">
-      <div class="pose-editor__section-title">Selection Mode</div>
-      <div class="pose-editor__mode">
-        <button class="pose-editor__button pose-editor__button--active" data-action="rotate" type="button" aria-pressed="true">Joint Rotation</button>
-        <button class="pose-editor__button" data-action="translate" type="button" aria-pressed="false">IK Targets</button>
-        <button class="pose-editor__button" data-action="undo" type="button" disabled>Undo</button>
-        <button class="pose-editor__button" data-action="redo" type="button" disabled>Redo</button>
-      </div>
-      <div class="pose-editor__axis-group">
-        <div class="pose-editor__inline-label">Nudge Axis</div>
-        <div class="pose-editor__axis-buttons">
-          <button class="pose-editor__button pose-editor__button--active pose-editor__axis-button" data-axis="x" type="button">X</button>
-          <button class="pose-editor__button pose-editor__axis-button" data-axis="y" type="button">Y</button>
-          <button class="pose-editor__button pose-editor__axis-button" data-axis="z" type="button">Z</button>
+      <div class="pose-editor__section-title">Edit</div>
+      <div class="pose-editor__cluster">
+        <div class="pose-editor__segmented" aria-label="Selection mode">
+          <button class="pose-editor__button pose-editor__button--active" data-action="rotate" type="button" aria-pressed="true">Joint</button>
+          <button class="pose-editor__button" data-action="translate" type="button" aria-pressed="false">IK</button>
+        </div>
+        <div class="pose-editor__segmented" aria-label="Undo redo">
+          <button class="pose-editor__button pose-editor__button--icon" data-action="undo" type="button" disabled title="Undo" aria-label="Undo">↶</button>
+          <button class="pose-editor__button pose-editor__button--icon" data-action="redo" type="button" disabled title="Redo" aria-label="Redo">↷</button>
+        </div>
+        <div class="pose-editor__segmented" aria-label="Nudge axis">
+          <button class="pose-editor__button pose-editor__button--active pose-editor__axis-button" data-axis="x" type="button" aria-label="X axis">X</button>
+          <button class="pose-editor__button pose-editor__axis-button" data-axis="y" type="button" aria-label="Y axis">Y</button>
+          <button class="pose-editor__button pose-editor__axis-button" data-axis="z" type="button" aria-label="Z axis">Z</button>
         </div>
       </div>
     </section>
     <section class="pose-editor__section">
-      <div class="pose-editor__section-title">Camera View</div>
-      <div class="pose-editor__views">
-        <button class="pose-editor__button pose-editor__button--active" data-view="iso" type="button" aria-pressed="true">Isometric</button>
-        <button class="pose-editor__button" data-view="left" type="button" aria-pressed="false">Left</button>
-        <button class="pose-editor__button" data-view="right" type="button" aria-pressed="false">Right</button>
-        <button class="pose-editor__button" data-view="top" type="button" aria-pressed="false">Top</button>
-        <button class="pose-editor__button" data-view="down" type="button" aria-pressed="false">Bottom</button>
-        <button class="pose-editor__button" data-action="projection" type="button" aria-pressed="false">Orthographic</button>
+      <div class="pose-editor__section-title">Camera</div>
+      <div class="pose-editor__camera-bar">
+        <button class="pose-editor__button pose-editor__button--icon pose-editor__button--active" data-view="iso" type="button" aria-pressed="true" title="Isometric" aria-label="Isometric view">◆</button>
+        <button class="pose-editor__button pose-editor__button--icon" data-view="left" type="button" aria-pressed="false" title="Left" aria-label="Left view">←</button>
+        <button class="pose-editor__button pose-editor__button--icon" data-view="right" type="button" aria-pressed="false" title="Right" aria-label="Right view">→</button>
+        <button class="pose-editor__button pose-editor__button--icon" data-view="top" type="button" aria-pressed="false" title="Top" aria-label="Top view">↑</button>
+        <button class="pose-editor__button pose-editor__button--icon" data-view="down" type="button" aria-pressed="false" title="Bottom" aria-label="Bottom view">↓</button>
+        <button class="pose-editor__button pose-editor__button--icon pose-editor__button--wide-icon" data-action="projection" type="button" aria-pressed="false" title="Toggle orthographic" aria-label="Toggle orthographic camera">3D</button>
       </div>
     </section>
     <section class="pose-editor__section">
@@ -2035,21 +2061,16 @@ function createPoseEditorUi(shell: HTMLElement): {
       <div class="pose-editor__actions">
         <button class="pose-editor__button" data-action="solve-ik" type="button">Solve IK</button>
         <button class="pose-editor__button" data-action="sync-ik" type="button">Sync Targets</button>
-        <button class="pose-editor__button" data-action="reset-selected" type="button">Reset Selected</button>
+        <button class="pose-editor__button" data-action="reset-selected" type="button">Reset</button>
         <button class="pose-editor__button" data-action="reset-all" type="button">Reset Rig</button>
       </div>
     </section>
-    <section class="pose-editor__section">
-      <div class="pose-editor__section-title">Pose Sources</div>
-      <div class="pose-editor__actions">
+    <section class="pose-editor__section pose-editor__section--wide">
+      <div class="pose-editor__section-title">Sources and File</div>
+      <div class="pose-editor__actions pose-editor__actions--compact">
         <button class="pose-editor__button" data-action="reference-image" type="button">Use Reference Image</button>
-      </div>
-    </section>
-    <section class="pose-editor__section">
-      <div class="pose-editor__section-title">Production Pose File</div>
-      <div class="pose-editor__actions">
-        <button class="pose-editor__button" data-action="copy" type="button">Copy Pose File</button>
-        <button class="pose-editor__button pose-editor__button--primary" data-action="save" type="button">Download Pose File</button>
+        <button class="pose-editor__button" data-action="copy" type="button">Copy File</button>
+        <button class="pose-editor__button pose-editor__button--primary" data-action="save" type="button">Save Git File</button>
       </div>
     </section>
   `;

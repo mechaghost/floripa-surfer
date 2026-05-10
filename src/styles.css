@@ -54,11 +54,12 @@ canvas {
   top: max(14px, env(safe-area-inset-top));
   right: max(14px, env(safe-area-inset-right));
   z-index: 5;
-  width: min(430px, calc(100vw - 28px));
+  width: min(520px, calc(100vw - 28px));
   max-height: calc(100vh - 28px);
   display: grid;
-  gap: 12px;
-  padding: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 10px;
+  padding: 12px;
   border: 1px solid rgba(255, 255, 255, 0.3);
   background: rgba(7, 39, 48, 0.82);
   color: rgba(255, 255, 255, 0.92);
@@ -68,6 +69,7 @@ canvas {
 }
 
 .pose-editor__header {
+  grid-column: 1 / -1;
   display: flex;
   justify-content: space-between;
   gap: 12px;
@@ -95,32 +97,48 @@ canvas {
 
 .pose-editor__selected {
   min-height: 22px;
-  font-size: 1.02rem;
+  font-size: 0.96rem;
   font-weight: 850;
 }
 
 .pose-editor__section {
   min-width: 0;
   display: grid;
-  gap: 7px;
-  padding-top: 10px;
+  gap: 6px;
+  padding-top: 8px;
   border-top: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.pose-editor__section--wide {
+  grid-column: 1 / -1;
 }
 
 .pose-editor__mode,
 .pose-editor__state,
 .pose-editor__views,
 .pose-editor__actions,
+.pose-editor__cluster,
+.pose-editor__camera-bar,
 .pose-editor__axis-buttons {
   display: flex;
-  gap: 7px;
+  gap: 6px;
   flex-wrap: wrap;
+  align-items: center;
 }
 
 .pose-editor__state {
   display: grid;
-  grid-template-columns: minmax(140px, 1fr) auto auto;
+  grid-template-columns: minmax(130px, 1fr) auto auto;
   align-items: center;
+}
+
+.pose-editor__segmented {
+  display: inline-flex;
+  min-width: 0;
+}
+
+.pose-editor__segmented .pose-editor__button + .pose-editor__button {
+  margin-left: -1px;
 }
 
 .pose-editor__axis-group {
@@ -133,7 +151,7 @@ canvas {
 .pose-editor__field {
   display: grid;
   gap: 5px;
-  max-width: 260px;
+  max-width: none;
   font-size: 0.65rem;
   font-weight: 850;
   letter-spacing: 0.08em;
@@ -149,24 +167,24 @@ canvas {
 
 .pose-editor__select {
   min-width: 0;
-  min-height: 32px;
+  min-height: 30px;
   border: 1px solid rgba(255, 255, 255, 0.28);
   background: rgba(0, 18, 24, 0.34);
   color: rgba(255, 255, 255, 0.92);
   padding: 0 9px;
   font: inherit;
-  font-size: 0.78rem;
+  font-size: 0.74rem;
   font-weight: 760;
 }
 
 .pose-editor__button {
-  min-height: 32px;
-  padding: 0 10px;
+  min-height: 30px;
+  padding: 0 9px;
   border: 1px solid rgba(255, 255, 255, 0.28);
   background: rgba(255, 255, 255, 0.1);
   color: rgba(255, 255, 255, 0.9);
   font: inherit;
-  font-size: 0.78rem;
+  font-size: 0.74rem;
   font-weight: 800;
   white-space: nowrap;
   cursor: pointer;
@@ -194,14 +212,25 @@ canvas {
   border-color: rgba(255, 216, 198, 0.56);
 }
 
+.pose-editor__button--icon {
+  width: 30px;
+  padding: 0;
+  text-align: center;
+}
+
+.pose-editor__button--wide-icon {
+  width: 38px;
+}
+
 .pose-editor__axis-button {
-  width: 32px;
+  width: 30px;
   padding: 0;
 }
 
 .pose-editor__status {
+  grid-column: 1 / -1;
   min-height: 28px;
-  padding: 8px 9px;
+  padding: 7px 9px;
   border-left: 3px solid rgba(255, 239, 92, 0.58);
   background: rgba(0, 18, 24, 0.24);
   font-size: 0.74rem;
@@ -334,6 +363,7 @@ canvas {
 
   .pose-editor__header,
   .pose-editor__section:first-of-type,
+  .pose-editor__section--wide,
   .pose-editor__status {
     grid-column: 1 / -1;
   }
@@ -346,6 +376,10 @@ canvas {
 @media (max-width: 520px) {
   .pose-editor {
     grid-template-columns: 1fr;
+  }
+
+  .pose-editor__section {
+    grid-column: 1 / -1;
   }
 
   .pose-editor__state {
