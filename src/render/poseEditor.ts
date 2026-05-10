@@ -197,7 +197,7 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
   });
   transformControls.addEventListener('objectChange', () => {
     if (selected?.type === 'ik') {
-      solveIk();
+      solveSelectedIk(selected.handle);
     }
     updateOutput();
   });
@@ -615,13 +615,13 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
     ), null, 2);
   }
 
-  function solveIk(): boolean {
+  function solveIk(handles = ikHandles): boolean {
     if (!skinnedMesh || ikHandles.length === 0) {
       return false;
     }
 
-    const clamped = clampIkTargetsToReach(ikHandles);
-    const iks = ikHandles.map((handle): IK => {
+    const clamped = clampIkTargetsToReach(handles);
+    const iks = handles.map((handle): IK => {
       const mesh = skinnedMesh as SkinnedMesh;
       return {
         target: ensureSkeletonIndex(mesh, handle.target),
@@ -633,12 +633,49 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
     });
 
     new CCDIKSolver(skinnedMesh, iks).update();
-    updateDrivenBonesFromTargets(ikHandles);
+    updateDrivenBonesFromTargets(handles);
     updateMarkers(markers);
     ui.status.textContent = clamped
       ? 'IK solved with unreachable target clamped to limb reach.'
       : 'IK solved. Save or export the pose when it looks right.';
     updateOutput();
+    return clamped;
+  }
+
+  function solveSelectedIk(handle: IkHandle): boolean {
+    if (handle.label === 'Torso') {
+      return solveTorsoBodyIk(handle);
+    }
+
+    const clamped = solveIk([handle]);
+    syncDependentIkTargets(handle);
+    updateMarkers(markers);
+    updateOutput();
+    return clamped;
+  }
+
+  function solveTorsoBodyIk(handle: IkHandle): boolean {
+    if (!handle.reachRoot) {
+      return solveIk([handle]);
+    }
+
+    const targetWorld = getObjectWorldPosition(handle.target);
+    const effectorWorld = getObjectWorldPosition(handle.effector);
+    const rootWorld = getObjectWorldPosition(handle.reachRoot);
+    const delta = targetWorld.sub(effectorWorld);
+
+    if (delta.lengthSq() > 0.000001) {
+      setObjectWorldPosition(handle.reachRoot, rootWorld.add(delta));
+    }
+
+    const plantedFootHandles = ikHandles.filter((item) => item.label === 'Left Foot' || item.label === 'Right Foot');
+    const clamped = plantedFootHandles.length > 0 ? solveIk(plantedFootHandles) : false;
+    syncDependentIkTargets(handle);
+    updateMarkers(markers);
+    updateOutput();
+    ui.status.textContent = clamped
+      ? 'Torso lowered with planted feet; foot targets were clamped to limb reach.'
+      : 'Torso lowered with planted feet.';
     return clamped;
   }
 
@@ -711,6 +748,16 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
       syncIkTarget(handle);
     }
     ui.status.textContent = 'IK handles synced to the current pose.';
+  }
+
+  function syncDependentIkTargets(parentHandle: IkHandle): void {
+    for (const handle of ikHandles) {
+      if (handle === parentHandle || !isPoseIkTargetDependent(parentHandle.effector, handle.drivenBone ?? handle.effector)) {
+        continue;
+      }
+
+      syncIkTarget(handle);
+    }
   }
 
   function syncIkTarget(handle: IkHandle): void {
@@ -1081,7 +1128,7 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
 
     const amount = sign * KEYBOARD_MOVE_STEP * multiplier;
     selected.handle.target.position[activeAxis] += amount;
-    const clamped = solveIk();
+    const clamped = solveSelectedIk(selected.handle);
     commitHistorySnapshot(before);
     updateOutput();
     ui.status.textContent = clamped
@@ -1490,6 +1537,19 @@ function setObjectWorldPosition(object: Object3D, worldPosition: Vector3): void 
   object.parent?.worldToLocal(localPosition);
   object.position.copy(localPosition);
   object.updateMatrixWorld(true);
+}
+
+export function isPoseIkTargetDependent(parentEffector: Object3D, childSource: Object3D): boolean {
+  let cursor: Object3D | null = childSource.parent;
+  while (cursor) {
+    if (cursor === parentEffector) {
+      return true;
+    }
+
+    cursor = cursor.parent;
+  }
+
+  return false;
 }
 
 function getObjectWorldPosition(object: Object3D): Vector3 {

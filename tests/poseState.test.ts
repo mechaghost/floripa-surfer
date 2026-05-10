@@ -12,6 +12,7 @@ import {
   type PoseLibrary,
   type SavedPose,
 } from '../src/render/poseState';
+import { isPoseIkTargetDependent } from '../src/render/poseEditor';
 
 describe('pose state', () => {
   afterEach(() => {
@@ -137,6 +138,20 @@ describe('pose state', () => {
       activeState: 'default',
       states: {},
     })).not.toThrow();
+  });
+
+  it('detects IK targets that should follow a moved parent target', () => {
+    const torso = new Object3D();
+    const neck = new Object3D();
+    const head = new Object3D();
+    const hips = new Object3D();
+    const leg = new Object3D();
+    torso.add(neck);
+    neck.add(head);
+    hips.add(leg);
+
+    expect(isPoseIkTargetDependent(torso, head)).toBe(true);
+    expect(isPoseIkTargetDependent(torso, leg)).toBe(false);
   });
 });
 
