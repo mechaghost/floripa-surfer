@@ -567,7 +567,7 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
     ui.projectionButton.classList.toggle('pose-editor__button--active', cameraProjection === 'orthographic');
     ui.projectionButton.setAttribute('aria-pressed', String(cameraProjection === 'orthographic'));
     ui.projectionButton.textContent = cameraProjection === 'orthographic' ? '2D' : '3D';
-    ui.projectionButton.title = cameraProjection === 'orthographic' ? 'Orthographic camera' : 'Perspective camera';
+    ui.projectionButton.dataset.tooltip = cameraProjection === 'orthographic' ? 'Orthographic camera' : 'Perspective camera';
   }
 
   function setActiveAxis(axis: TransformAxis): void {
@@ -2124,6 +2124,7 @@ function createPoseEditorUi(shell: HTMLElement): {
       </div>
     </section>
   `;
+  initializePoseEditorTooltips(panel, loadBaseModal, referenceModal);
   shell.append(panel);
   shell.append(loadBaseModal);
   shell.append(referenceModal);
@@ -2175,4 +2176,22 @@ function createPoseEditorUi(shell: HTMLElement): {
     saveButton: panel.querySelector('[data-action="save"]') as HTMLButtonElement,
     copyButton: panel.querySelector('[data-action="copy"]') as HTMLButtonElement,
   };
+}
+
+function initializePoseEditorTooltips(...roots: HTMLElement[]): void {
+  for (const root of roots) {
+    for (const button of root.querySelectorAll<HTMLElement>('.pose-editor__button')) {
+      const tooltip =
+        button.dataset.tooltip ??
+        button.getAttribute('title') ??
+        button.getAttribute('aria-label') ??
+        button.textContent?.trim();
+
+      if (tooltip) {
+        button.dataset.tooltip = tooltip;
+      }
+
+      button.removeAttribute('title');
+    }
+  }
 }
