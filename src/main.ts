@@ -18,6 +18,7 @@ import {
   PerspectiveCamera,
   Quaternion,
   Scene,
+  Euler,
   Vector3,
   WebGLRenderer,
 } from 'three';
@@ -27,7 +28,6 @@ import type { SurferState } from './game/simulation/surfer';
 import { createInitialSurferState, updateSurfer } from './game/simulation/surfer';
 import { sampleWave, sampleWaveSet } from './game/simulation/waves';
 import { createOcean } from './render/ocean';
-import { createPoseEditorView } from './render/poseEditor';
 import { createSurferModel, getSurferRenderHeading } from './render/surferModel';
 import { getBoardWaterContact } from './render/waterContact';
 import { createWorld } from './render/world';
@@ -71,14 +71,19 @@ renderer.shadowMap.type = PCFSoftShadowMap;
 shell.append(renderer.domElement);
 
 const view = new URLSearchParams(window.location.search).get('view');
-const poseEditorAvailable = isLocalhost(window.location.hostname);
+const localToolsAvailable = isLocalhost(window.location.hostname);
 
-if (view === 'surfer-test') {
+if (view === 'surfer-test' && localToolsAvailable) {
   createSurferVerificationView(shell, renderer);
-} else if (view === 'pose-editor' && poseEditorAvailable) {
-  createPoseEditorView(shell, renderer);
+} else if (view === 'pose-editor' && localToolsAvailable) {
+  void createLocalPoseEditor(shell, renderer);
 } else {
-  createGame(shell, renderer, poseEditorAvailable);
+  createGame(shell, renderer, localToolsAvailable);
+}
+
+async function createLocalPoseEditor(shell: HTMLElement, renderer: WebGLRenderer): Promise<void> {
+  const { createPoseEditorView } = await import('./render/poseEditor');
+  createPoseEditorView(shell, renderer);
 }
 
 function createGame(shell: HTMLElement, renderer: WebGLRenderer, poseEditorAvailable: boolean): void {
@@ -152,26 +157,31 @@ type WaterMotionCues = {
 
 function createWaterMotionCues(): WaterMotionCues {
   const root = new Group();
+  const count = 104;
   const material = new MeshBasicMaterial({
     color: new Color('#b9fbff'),
     transparent: true,
-    opacity: 0.28,
+    opacity: 0.24,
     depthWrite: false,
     blending: AdditiveBlending,
   });
   const geometry = new PlaneGeometry(1.15, 0.08);
-  const flecks = Array.from({ length: 104 }, (_, index) => {
-    const mesh = new Mesh(geometry, material.clone());
-    mesh.rotation.x = -Math.PI / 2;
-    mesh.renderOrder = 2;
-    root.add(mesh);
-    return {
-      mesh,
+  const mesh = new InstancedMesh(geometry, material, count);
+  mesh.instanceMatrix.setUsage(DynamicDrawUsage);
+  mesh.frustumCulled = false;
+  mesh.renderOrder = 2;
+  root.add(mesh);
+  const flecks = Array.from({ length: count }, (_, index) => ({
       seed: index * 19.19,
       length: 1 + pseudo(index * 4.21) * 2.4,
       width: 0.45 + pseudo(index * 7.9) * 0.55,
-    };
-  });
+  }));
+  const matrix = new Matrix4();
+  const position = new Vector3();
+  const scale = new Vector3();
+  const rotation = new Quaternion();
+  const cueEuler = new Euler(-Math.PI / 2, 0, 0);
+  const hiddenScale = new Vector3(0.001, 0.001, 0.001);
 
   function update(state: typeof surferState, time: number): void {
     const spacingX = 7.4;
@@ -188,16 +198,27 @@ function createWaterMotionCues(): WaterMotionCues {
       const z = startZ + (row + drift) * spacingZ + pseudo(seed + 8.7) * 3.2;
       const wave = sampleWave(x, z, time);
       const cue = flecks[i];
-      const mesh = cue.mesh;
       const localZ = z - state.position.z;
       const aheadFade = smoothstep(-38, -12, localZ) * (1 - smoothstep(34, 54, localZ));
       const speedStretch = 0.7 + Math.min(2.4, state.speed * 0.09);
+      const fadeScale = aheadFade * (0.6 + wave.facePower * 0.28 + pseudo(seed + 2.2) * 0.18);
 
-      mesh.position.set(x, wave.height + 0.045, z);
-      mesh.rotation.z = -state.heading + pseudo(seed + 3.1) * 0.42 - 0.21;
-      mesh.scale.set(cue.length * speedStretch, cue.width * (0.7 + wave.lipPower * 0.35), 1);
-      mesh.material.opacity = aheadFade * (0.16 + wave.facePower * 0.12 + pseudo(seed + 2.2) * 0.08);
+      if (fadeScale < 0.035) {
+        matrix.compose(position.set(x, wave.height + 0.045, z), rotation, hiddenScale);
+        mesh.setMatrixAt(i, matrix);
+        continue;
+      }
+
+      rotation.setFromEuler(cueEuler.set(-Math.PI / 2, 0, -state.heading + pseudo(seed + 3.1) * 0.42 - 0.21));
+      matrix.compose(
+        position.set(x, wave.height + 0.045, z),
+        rotation,
+        scale.set(cue.length * speedStretch * fadeScale, cue.width * (0.7 + wave.lipPower * 0.35), 1),
+      );
+      mesh.setMatrixAt(i, matrix);
     }
+
+    mesh.instanceMatrix.needsUpdate = true;
   }
 
   return { root, update };
@@ -536,17 +557,22 @@ type Spray = {
 function createSpray(): Spray {
   const root = new Group();
   const halfBoardLength = 1.35;
+  const count = 96;
   const material = new MeshStandardMaterial({
     color: new Color('#d8f9ff'),
     roughness: 0.7,
     flatShading: true,
     transparent: true,
-    opacity: 0.58,
+    opacity: 0.42,
     depthWrite: false,
   });
   const geometry = new IcosahedronGeometry(0.083, 1);
-  const particles = Array.from({ length: 96 }, (_, index) => {
-    const mesh = new Mesh(geometry, material.clone());
+  const mesh = new InstancedMesh(geometry, material, count);
+  mesh.instanceMatrix.setUsage(DynamicDrawUsage);
+  mesh.frustumCulled = false;
+  mesh.renderOrder = 5;
+  root.add(mesh);
+  const particles = Array.from({ length: count }, (_, index) => {
     const lane = index % 2 === 0 ? -1 : 1;
     const emitter = index < 66 ? 'tail' : 'nose';
     const seed = index * 9.37 + 1.2;
@@ -556,9 +582,7 @@ function createSpray(): Spray {
     const backVelocity = 1 + pseudo(seed + 2.1) * 2.2;
     const lifetime = 0.38 + pseudo(seed + 3.8) * 0.42;
     const phase = pseudo(seed + 5.4) * lifetime;
-    root.add(mesh);
     return {
-      mesh,
       emitter,
       lane,
       seed,
@@ -571,6 +595,12 @@ function createSpray(): Spray {
       size: 0.24 + pseudo(seed + 6.6) * 0.51,
     };
   });
+  const matrix = new Matrix4();
+  const position = new Vector3();
+  const scale = new Vector3();
+  const rotation = new Quaternion();
+  const axis = new Vector3();
+  const hiddenScale = new Vector3(0.001, 0.001, 0.001);
 
   function update(state: typeof surferState, lipPower: number, time: number): void {
     root.position.set(
@@ -592,7 +622,8 @@ function createSpray(): Spray {
     const noseDepth = getContactDepth(sampleWave(noseX, noseZ, time).height, state.height - pitchRise) * boardContact;
     const tailDepth = getContactDepth(sampleWave(tailX, tailZ, time).height, state.height + pitchRise) * boardContact;
     const intensity = Math.min(1, 0.2 + lipPower * 0.65 + state.speed * 0.025);
-    for (const particle of particles) {
+    for (let index = 0; index < particles.length; index += 1) {
+      const particle = particles[index];
       const isTail = particle.emitter === 'tail';
       const contactDepth = isTail ? tailDepth : noseDepth;
       const emitterIntensity = intensity * Math.min(1, contactDepth * (isTail ? 2.4 : 3.2));
@@ -605,23 +636,35 @@ function createSpray(): Spray {
       const originZ = isTail ? 0.78 : -0.92;
       const zDirection = isTail ? 1 : -0.58;
       const liftBoost = isTail ? 1 : 1.45;
+      const opacityScale = Math.sqrt(Math.max(0, emitterIntensity * (0.68 - age * 0.62)));
 
-      particle.mesh.position.x =
+      if (fleckSize <= 0.002 || opacityScale < 0.025) {
+        matrix.compose(position.set(0, 0, 0), rotation, hiddenScale);
+        mesh.setMatrixAt(index, matrix);
+        continue;
+      }
+
+      position.x =
         particle.lane * particle.sideBias +
         particle.sideVelocity * age * wakePush * (isTail ? 1 : 1.35) +
         turbulence * (0.5 + age);
-      particle.mesh.position.y =
+      position.y =
         particle.liftVelocity * age * liftBoost +
         contactDepth * 0.16 * (1 - age) -
         gravityDrop +
         Math.sin(time * 11 + particle.seed) * 0.035;
-      particle.mesh.position.z =
+      position.z =
         originZ +
         particle.backVelocity * age * wakePush * zDirection +
         Math.sin(time * 7.6 + particle.seed) * 0.13 * age;
-      particle.mesh.scale.setScalar(Math.max(0.018, fleckSize * (0.68 + age * 0.72)));
-      particle.mesh.material.opacity = Math.max(0, emitterIntensity * (0.68 - age * 0.62));
+      axis.set(Math.sin(particle.seed), 1, Math.cos(particle.seed * 1.3)).normalize();
+      rotation.setFromAxisAngle(axis, time * 0.37 + particle.seed);
+      scale.setScalar(Math.max(0.006, fleckSize * (0.68 + age * 0.72) * (0.45 + opacityScale * 0.55)));
+      matrix.compose(position, rotation, scale);
+      mesh.setMatrixAt(index, matrix);
     }
+
+    mesh.instanceMatrix.needsUpdate = true;
   }
 
   return { root, update };
@@ -634,22 +677,24 @@ type BoardWake = {
 
 function createBoardWake(): BoardWake {
   const root = new Group();
+  const count = 82;
   const material = new MeshStandardMaterial({
     color: new Color('#e8fbff'),
     roughness: 0.66,
     flatShading: true,
     transparent: true,
-    opacity: 0,
+    opacity: 0.24,
     depthWrite: false,
     blending: AdditiveBlending,
   });
   const geometry = new IcosahedronGeometry(1, 1);
-  const wakes = Array.from({ length: 82 }, (_, index) => {
-    const mesh = new Mesh(geometry, material.clone());
-    mesh.renderOrder = 3;
-    root.add(mesh);
+  const mesh = new InstancedMesh(geometry, material, count);
+  mesh.instanceMatrix.setUsage(DynamicDrawUsage);
+  mesh.frustumCulled = false;
+  mesh.renderOrder = 3;
+  root.add(mesh);
+  const wakes = Array.from({ length: count }, (_, index) => {
     return {
-      mesh,
       age: 999,
       lifetime: 1.15 + pseudo(index * 4.33) * 0.82,
       seed: index * 15.77 + 2.4,
@@ -659,8 +704,14 @@ function createBoardWake(): BoardWake {
       baseRadius: 0.032 + pseudo(index * 8.81) * 0.052,
       radius: 0.032,
       contact: 0,
+      position: new Vector3(),
+      rotation: new Quaternion(),
     };
   });
+  const matrix = new Matrix4();
+  const scale = new Vector3();
+  const euler = new Euler();
+  const hiddenScale = new Vector3(0.001, 0.001, 0.001);
   let cursor = 0;
   let emitCarry = 0;
 
@@ -691,8 +742,8 @@ function createBoardWake(): BoardWake {
     wake.heading = getSurferRenderHeading(state.heading) + side * (0.06 + pseudo(wake.seed + 7.3) * 0.12);
     wake.radius = wake.baseRadius * (0.42 + contactProfile.size * 0.58);
     wake.contact = contactProfile.contact;
-    wake.mesh.position.set(x, water.height + 0.042, z);
-    wake.mesh.rotation.z = wake.heading;
+    wake.position.set(x, water.height + 0.042, z);
+    wake.rotation.setFromEuler(euler.set(0, 0, wake.heading));
   }
 
   function update(state: typeof surferState, lipPower: number, time: number, dt: number): void {
@@ -716,29 +767,35 @@ function createBoardWake(): BoardWake {
       emitCarry -= 1;
     }
 
-    for (const wake of wakes) {
+    for (let index = 0; index < wakes.length; index += 1) {
+      const wake = wakes[index];
       wake.age += dt;
       const life = Math.min(1, wake.age / wake.lifetime);
       if (life >= 1) {
-        wake.mesh.material.opacity = 0;
+        matrix.compose(wake.position, wake.rotation, hiddenScale);
+        mesh.setMatrixAt(index, matrix);
         continue;
       }
 
       const fade = Math.pow(1 - life, 1.65);
       const ripple = Math.sin(time * 10.5 + wake.seed) * 0.035;
-      const water = sampleWave(wake.mesh.position.x, wake.mesh.position.z, time);
+      const water = sampleWave(wake.position.x, wake.position.z, time);
       const radius = wake.radius * (0.78 + life * 0.54 + lipPower * 0.16);
-      wake.mesh.position.y = water.height + radius * 0.58 + ripple;
-      wake.mesh.position.x += Math.cos(wake.heading) * wake.drift * dt * (0.28 + life);
-      wake.mesh.position.z += Math.sin(wake.heading) * wake.drift * dt * (0.28 + life);
-      wake.mesh.rotation.set(
+      const opacityScale = Math.sqrt(Math.max(0, fade * wake.contact * (0.28 + lipPower * 0.12)));
+      wake.position.y = water.height + radius * 0.58 + ripple;
+      wake.position.x += Math.cos(wake.heading) * wake.drift * dt * (0.28 + life);
+      wake.position.z += Math.sin(wake.heading) * wake.drift * dt * (0.28 + life);
+      wake.rotation.setFromEuler(euler.set(
         time * 0.24 + wake.seed,
         wake.heading + Math.sin(time * 2.8 + wake.seed) * 0.06 * life,
         time * 0.16 + wake.seed * 0.4,
-      );
-      wake.mesh.scale.setScalar(radius);
-      wake.mesh.material.opacity = Math.min(0.28, fade * wake.contact * (0.28 + lipPower * 0.12));
+      ));
+      scale.setScalar(radius * (0.42 + opacityScale * 0.58));
+      matrix.compose(wake.position, wake.rotation, scale);
+      mesh.setMatrixAt(index, matrix);
     }
+
+    mesh.instanceMatrix.needsUpdate = true;
   }
 
   return { root, update };
@@ -765,13 +822,17 @@ function createPoseEditorLink(): HTMLAnchorElement {
   return link;
 }
 
-window.floripaSurfer = {
-  scene,
-  camera,
-  renderer,
-  getSurferState: () => surferState,
-  getCameraPosition: () => camera.position.clone(),
-};
+if (poseEditorAvailable) {
+  window.floripaSurfer = {
+    scene,
+    camera,
+    renderer,
+    getSurferState: () => surferState,
+    getCameraPosition: () => camera.position.clone(),
+  };
+} else {
+  delete window.floripaSurfer;
+}
 }
 
 type VerificationPanel = {

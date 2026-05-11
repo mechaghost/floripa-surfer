@@ -51,6 +51,9 @@ const WATER_DEPTH_OFFSET_UNITS = 2;
 const BOARD_LENGTH = 4.65;
 const BOARD_WIDTH = 2.05;
 const WAKE_STAMP_LIMIT = 34;
+const WAKE_STAMP_CULL_CROSS = 2.15;
+const WAKE_STAMP_CULL_LONGITUDINAL = 2.15;
+const OCEAN_NORMAL_UPDATE_INTERVAL = 2;
 
 export function createOcean(): Ocean {
   const geometry = new PlaneGeometry(300, 250, 156, 128);
@@ -161,6 +164,7 @@ export function createOcean(): Ocean {
   let initialized = false;
   let wakeEmitCarry = 0;
   let wakeStampIndex = 0;
+  let normalUpdateFrame = 0;
   const wakeStamps: WaterDeformationStamp[] = [];
 
   function update(time: number, board: OceanBoardState): void {
@@ -226,7 +230,10 @@ export function createOcean(): Ocean {
 
     position.needsUpdate = true;
     color.needsUpdate = true;
-    geometry.computeVertexNormals();
+    if (normalUpdateFrame % OCEAN_NORMAL_UPDATE_INTERVAL === 0) {
+      geometry.computeVertexNormals();
+    }
+    normalUpdateFrame += 1;
   }
 
   return { mesh, update };
@@ -293,6 +300,10 @@ export function getTemporalWaterDeformation(
   let foamAmount = 0;
 
   for (const stamp of stamps) {
+    if (!isNearWakeStamp(worldX, worldZ, stamp)) {
+      continue;
+    }
+
     const deformation = getWakeStampDeformation(worldX, worldZ, stamp);
     heightOffset += deformation.heightOffset;
     alpha = Math.max(alpha, deformation.alpha);
@@ -329,6 +340,10 @@ export function getWakeStampDeformation(
   const length = stamp.length * (1 + life * 1.15);
   const cross = Math.abs(localX) / width;
   const longitudinal = Math.abs(localZ) / length;
+  if (cross > WAKE_STAMP_CULL_CROSS || longitudinal > WAKE_STAMP_CULL_LONGITUDINAL) {
+    return { heightOffset: 0, alpha: 0, foam: 0 };
+  }
+
   const core = Math.exp(-(cross * cross * 1.85 + longitudinal * longitudinal * 1.15));
   const railRim =
     smoothstep(0.48, 0.88, cross) *
@@ -342,6 +357,21 @@ export function getWakeStampDeformation(
     alpha: clamp(Math.max(core, railRim) * fade * stamp.strength, 0, 1),
     foam: clamp(railRim * fade * stamp.strength * 0.55, 0, 1),
   };
+}
+
+function isNearWakeStamp(worldX: number, worldZ: number, stamp: WaterDeformationStamp): boolean {
+  const life = clamp(stamp.age / stamp.lifetime, 0, 1);
+  if (life >= 1) {
+    return false;
+  }
+
+  const width = stamp.width * (1 + life * 0.72);
+  const length = stamp.length * (1 + life * 1.15);
+  const radius = Math.max(width * WAKE_STAMP_CULL_CROSS, length * WAKE_STAMP_CULL_LONGITUDINAL);
+  const dx = worldX - stamp.x;
+  const dz = worldZ - stamp.z;
+
+  return dx * dx + dz * dz <= radius * radius;
 }
 
 function dampValue(current: number, target: number, smoothing: number, dt: number): number {

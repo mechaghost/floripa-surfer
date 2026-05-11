@@ -817,7 +817,10 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
     try {
       const response = await fetch('/__floripa/pose-library', {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: {
+          'content-type': 'application/json',
+          'x-floripa-local-save': '1',
+        },
         body: poseJson,
       });
 
