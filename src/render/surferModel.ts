@@ -32,14 +32,18 @@ import {
 const BOARD_DECK_TOP_PERCENTILE = 0.92;
 const BOARD_HULL_BOTTOM_PERCENTILE = 0.15;
 const BOARD_HULL_CLEARANCE = 0.02;
-const BOARD_SURFACE_LENGTH = 2.9;
-const BOARD_SURFACE_WIDTH = 0.82;
+const BOARD_SURFACE_LENGTH = 3.35;
+const BOARD_SURFACE_WIDTH = 1.04;
+const BOARD_TAIL_LOAD_BASE = 0.045;
+const BOARD_TAIL_LOAD_SPEED = 0.05;
 const BOARD_FIN_PROTRUSION_SCALE = 0.32;
 const BOARD_DEPTH_OFFSET_FACTOR = -1.25;
 const BOARD_DEPTH_OFFSET_UNITS = -4;
 const BOARD_RENDER_ORDER = 8;
-const MAX_VISUAL_PITCH = 0.42;
-const MAX_VISUAL_BANK = 0.82;
+const MAX_WATER_PITCH = 0.3;
+const MAX_WATER_BANK = 0.24;
+const MAX_VISUAL_PITCH = 0.48;
+const MAX_VISUAL_BANK = 0.86;
 const FOOT_DECK_CLEARANCE = 0.018;
 const SURFER_VISUAL_HEIGHT_OFFSET = 0.2;
 
@@ -63,6 +67,13 @@ type RiderPoseController = {
   poseRoot: Object3D;
   poses: Map<string, SavedPose>;
   weights: Map<string, number>;
+};
+
+export type BoardWaterProbePose = {
+  height: number;
+  pitch: number;
+  bank: number;
+  contact: number;
 };
 
 export function getSurferRenderHeading(simHeading: number): number {
@@ -126,6 +137,7 @@ export function createSurferModel(): SurferModel {
   const assetRig = new Group();
   let visualPitch = 0;
   let visualBank = 0;
+  let visualHeight: number | null = null;
   let previousUpdateTime: number | null = null;
   let riderPoseController: RiderPoseController | null = null;
   root.add(trickPivot);
@@ -183,13 +195,29 @@ export function createSurferModel(): SurferModel {
     previousUpdateTime = time;
 
     const renderBank = getSurferRenderBank(state.bank);
-    const trim = getOrganicBoardTrim(state, time);
-    const targetPitch = clamp(state.pitch * 0.45 + trim.pitch, -MAX_VISUAL_PITCH, MAX_VISUAL_PITCH);
-    const targetBank = clamp(renderBank + trim.bank, -MAX_VISUAL_BANK, MAX_VISUAL_BANK);
-    visualPitch = dampValue(visualPitch, targetPitch, 7.5, dt);
-    visualBank = dampValue(visualBank, targetBank, 7.5, dt);
+    const probePose = getBoardWaterProbePose(state, time);
+    const trim = getOrganicBoardTrimFromProbe(state, time, probePose);
+    const waterInfluence = probePose.contact;
+    const targetPitch = clamp(
+      state.pitch * (0.22 + (1 - waterInfluence) * 0.28) + trim.pitch,
+      -MAX_VISUAL_PITCH,
+      MAX_VISUAL_PITCH,
+    );
+    const targetBank = clamp(
+      renderBank * (0.58 + (1 - waterInfluence) * 0.42) + trim.bank,
+      -MAX_VISUAL_BANK,
+      MAX_VISUAL_BANK,
+    );
+    visualPitch = dampValue(visualPitch, targetPitch, 10.5, dt);
+    visualBank = dampValue(visualBank, targetBank, 10.5, dt);
 
-    root.position.set(state.position.x, getSurferVisualHeight(state.height), state.position.z);
+    const targetWaterHeight = state.height * (1 - waterInfluence) + probePose.height * waterInfluence;
+    const targetVisualHeight = getSurferVisualHeight(targetWaterHeight);
+    visualHeight = visualHeight === null
+      ? targetVisualHeight
+      : dampValue(visualHeight, targetVisualHeight, waterInfluence > 0.2 ? 13 : 6, dt);
+
+    root.position.set(state.position.x, visualHeight, state.position.z);
     root.rotation.set(visualPitch, getSurferRenderHeading(state.heading), visualBank);
 
     const bounce = Math.sin(time * 10 + state.speed) * 0.025;
@@ -214,38 +242,61 @@ export function createSurferModel(): SurferModel {
 }
 
 export function getOrganicBoardTrim(state: SurferState, time: number): { pitch: number; bank: number } {
+  return getOrganicBoardTrimFromProbe(state, time, getBoardWaterProbePose(state, time));
+}
+
+export function getBoardWaterProbePose(state: SurferState, time: number): BoardWaterProbePose {
   const forwardX = Math.sin(state.heading);
   const forwardZ = -Math.cos(state.heading);
   const rightX = Math.cos(state.heading);
   const rightZ = Math.sin(state.heading);
   const halfLength = BOARD_SURFACE_LENGTH * 0.5;
   const halfWidth = BOARD_SURFACE_WIDTH * 0.5;
+  const nose = sampleBoardWaterProbe(state, time, 0, halfLength, forwardX, forwardZ, rightX, rightZ);
+  const noseLeft = sampleBoardWaterProbe(state, time, -halfWidth * 0.58, halfLength * 0.72, forwardX, forwardZ, rightX, rightZ);
+  const noseRight = sampleBoardWaterProbe(state, time, halfWidth * 0.58, halfLength * 0.72, forwardX, forwardZ, rightX, rightZ);
+  const tail = sampleBoardWaterProbe(state, time, 0, -halfLength, forwardX, forwardZ, rightX, rightZ);
+  const tailLeft = sampleBoardWaterProbe(state, time, -halfWidth * 0.62, -halfLength * 0.68, forwardX, forwardZ, rightX, rightZ);
+  const tailRight = sampleBoardWaterProbe(state, time, halfWidth * 0.62, -halfLength * 0.68, forwardX, forwardZ, rightX, rightZ);
+  const leftRail = sampleBoardWaterProbe(state, time, -halfWidth, -halfLength * 0.08, forwardX, forwardZ, rightX, rightZ);
+  const rightRail = sampleBoardWaterProbe(state, time, halfWidth, -halfLength * 0.08, forwardX, forwardZ, rightX, rightZ);
+  const center = sampleBoardWaterProbe(state, time, 0, 0, forwardX, forwardZ, rightX, rightZ);
+  const frontHeight = (nose.height * 1.6 + noseLeft.height + noseRight.height) / 3.6;
+  const backHeight = (tail.height * 1.6 + tailLeft.height + tailRight.height) / 3.6;
+  const leftHeight = (leftRail.height * 1.4 + noseLeft.height * 0.45 + tailLeft.height * 0.65) / 2.5;
+  const rightHeight = (rightRail.height * 1.4 + noseRight.height * 0.45 + tailRight.height * 0.65) / 2.5;
+  const tailLoad = BOARD_TAIL_LOAD_BASE + clamp((state.speed - 4) / 14, 0, 1) * BOARD_TAIL_LOAD_SPEED;
+  const loadedBackHeight = backHeight - tailLoad;
+  const loadedLeftHeight = leftHeight - tailLoad * 0.28;
+  const loadedRightHeight = rightHeight - tailLoad * 0.28;
+  const supportHeight =
+    center.height * 0.22 +
+    frontHeight * 0.16 +
+    loadedBackHeight * 0.4 +
+    loadedLeftHeight * 0.11 +
+    loadedRightHeight * 0.11;
+  const clearance = state.height - supportHeight;
+  const contact = state.airtime > 0 || Math.abs(state.verticalVelocity) > 0.08
+    ? 0
+    : clamp((0.34 - clearance) / 0.34, 0, 1);
+  const pitch = clamp(Math.atan2(frontHeight - loadedBackHeight, BOARD_SURFACE_LENGTH) * 1.28, -MAX_WATER_PITCH, MAX_WATER_PITCH);
+  const bank = clamp(Math.atan2(loadedRightHeight - loadedLeftHeight, BOARD_SURFACE_WIDTH) * 0.88, -MAX_WATER_BANK, MAX_WATER_BANK);
 
-  const nose = sampleWave(
-    state.position.x + forwardX * halfLength,
-    state.position.z + forwardZ * halfLength,
-    time,
-  );
-  const tail = sampleWave(
-    state.position.x - forwardX * halfLength,
-    state.position.z - forwardZ * halfLength,
-    time,
-  );
-  const rightRail = sampleWave(
-    state.position.x + rightX * halfWidth,
-    state.position.z + rightZ * halfWidth,
-    time,
-  );
-  const leftRail = sampleWave(
-    state.position.x - rightX * halfWidth,
-    state.position.z - rightZ * halfWidth,
-    time,
-  );
+  return {
+    height: supportHeight,
+    pitch,
+    bank,
+    contact,
+  };
+}
 
+function getOrganicBoardTrimFromProbe(
+  state: SurferState,
+  time: number,
+  probePose: BoardWaterProbePose,
+): { pitch: number; bank: number } {
   const speedFactor = clamp((state.speed - 4.5) / 11, 0, 1);
-  const waterContact = state.airtime > 0 || state.verticalVelocity !== 0 ? 0.35 : 1;
-  const surfacePitch = clamp(Math.atan2(nose.height - tail.height, BOARD_SURFACE_LENGTH) * 1.05, -0.21, 0.24);
-  const surfaceBank = clamp(Math.atan2(rightRail.height - leftRail.height, BOARD_SURFACE_WIDTH) * 0.52, -0.17, 0.17);
+  const waterContact = probePose.contact;
   const livingPitch =
     (Math.sin(time * 2.15 + state.position.z * 0.08) * 0.028 +
       Math.sin(time * 4.4 + state.position.x * 0.11) * 0.012) *
@@ -258,9 +309,26 @@ export function getOrganicBoardTrim(state: SurferState, time: number): { pitch: 
     waterContact;
 
   return {
-    pitch: surfacePitch * waterContact + livingPitch,
-    bank: surfaceBank * waterContact + livingBank,
+    pitch: probePose.pitch * waterContact + livingPitch,
+    bank: probePose.bank * waterContact + livingBank,
   };
+}
+
+function sampleBoardWaterProbe(
+  state: SurferState,
+  time: number,
+  localX: number,
+  localZ: number,
+  forwardX: number,
+  forwardZ: number,
+  rightX: number,
+  rightZ: number,
+): ReturnType<typeof sampleWave> {
+  return sampleWave(
+    state.position.x + rightX * localX + forwardX * localZ,
+    state.position.z + rightZ * localX + forwardZ * localZ,
+    time,
+  );
 }
 
 function createRiderPoseController(rider: PreparedRider): RiderPoseController | null {

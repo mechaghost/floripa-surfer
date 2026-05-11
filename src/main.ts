@@ -25,7 +25,7 @@ import './styles.css';
 import { attachKeyboard, createInputState } from './game/input/inputState';
 import type { SurferState } from './game/simulation/surfer';
 import { createInitialSurferState, updateSurfer } from './game/simulation/surfer';
-import { sampleWave } from './game/simulation/waves';
+import { sampleWave, sampleWaveSet } from './game/simulation/waves';
 import { createOcean } from './render/ocean';
 import { createPoseEditorView } from './render/poseEditor';
 import { createSurferModel, getSurferRenderHeading } from './render/surferModel';
@@ -33,6 +33,7 @@ import { getBoardWaterContact } from './render/waterContact';
 import { createWorld } from './render/world';
 import { createHud } from './ui/hud';
 import { createTouchControls } from './ui/touchControls';
+import { isLocalhost } from './localAccess';
 
 type GameInternals = {
   scene: Scene;
@@ -70,16 +71,17 @@ renderer.shadowMap.type = PCFSoftShadowMap;
 shell.append(renderer.domElement);
 
 const view = new URLSearchParams(window.location.search).get('view');
+const poseEditorAvailable = isLocalhost(window.location.hostname);
 
 if (view === 'surfer-test') {
   createSurferVerificationView(shell, renderer);
-} else if (view === 'pose-editor') {
+} else if (view === 'pose-editor' && poseEditorAvailable) {
   createPoseEditorView(shell, renderer);
 } else {
-  createGame(shell, renderer);
+  createGame(shell, renderer, poseEditorAvailable);
 }
 
-function createGame(shell: HTMLElement, renderer: WebGLRenderer): void {
+function createGame(shell: HTMLElement, renderer: WebGLRenderer, poseEditorAvailable: boolean): void {
 const { scene, camera, updateCamera } = createWorld();
 const ocean = createOcean();
 const surfer = createSurferModel();
@@ -91,14 +93,16 @@ const foamField = createLowPolyFoamField();
 const input = createInputState();
 const hud = createHud();
 const touchControls = createTouchControls(input, renderer.domElement);
-const poseEditorLink = createPoseEditorLink();
 const detachKeyboard = attachKeyboard(input);
 const clock = new Clock();
 let surferState = createInitialSurferState();
 let elapsed = 0;
 
 scene.add(ocean.mesh, foamField.root, contactFoam.root, wake.root, surfer.root, spray.root, waterCues.root);
-shell.append(hud.root, touchControls.root, poseEditorLink);
+shell.append(hud.root, touchControls.root);
+if (poseEditorAvailable) {
+  shell.append(createPoseEditorLink());
+}
 
 window.addEventListener('resize', resize);
 window.addEventListener('pagehide', dispose);
@@ -113,7 +117,7 @@ function tick(): void {
   surferState = updateSurfer(surferState, input, wave, dt);
   const currentWave = sampleWave(surferState.position.x, surferState.position.z, elapsed);
 
-  ocean.update(elapsed, surferState.position);
+  ocean.update(elapsed, surferState);
   foamField.update(surferState, elapsed);
   surfer.update(surferState, elapsed);
   contactFoam.update(surferState, currentWave.lipPower, elapsed, dt);
@@ -477,11 +481,17 @@ type WaveFoamSystem = {
 
 function getWaveFoamSystem(x: number, z: number, time: number): WaveFoamSystem {
   const wave = sampleWave(x, z, time);
+  const waveSet = sampleWaveSet(x, z, time);
   const primaryCrest = smoothstep(0.76, 0.99, Math.sin(z * 0.12 + time * 1.35));
   const secondaryCrest = smoothstep(0.8, 0.98, Math.sin(z * 0.21 + x * 0.08 + time * 1.9)) * 0.72;
   const barrelCrest = smoothstep(0.48, 0.95, Math.max(0, Math.sin(z * 0.075 - time * 0.85 + 1.5))) * 0.9;
-  const crestStrength = Math.min(1, Math.max(primaryCrest, secondaryCrest, barrelCrest));
-  const breakingEnergy = Math.max(smoothstep(0.62, 0.98, wave.lipPower) * 0.85, smoothstep(0.48, 2.2, wave.height));
+  const setCrest = waveSet.crestStrength * (0.7 + waveSet.intensity * 0.3);
+  const crestStrength = Math.min(1, Math.max(primaryCrest, secondaryCrest, barrelCrest, setCrest));
+  const breakingEnergy = Math.max(
+    smoothstep(0.62, 0.98, wave.lipPower) * 0.85,
+    smoothstep(0.48, 2.2, wave.height),
+    waveSet.intensity * 0.72,
+  );
   const faceSupport = smoothstep(0.38, 0.78, wave.facePower);
   const intensity = Math.min(1, crestStrength * breakingEnergy * (0.55 + faceSupport * 0.45));
   const slopeZ = Math.abs(wave.slopeZ) < 0.001 ? 0.001 : wave.slopeZ;

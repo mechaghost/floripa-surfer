@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { createInitialSurferState, updateSurfer } from '../src/game/simulation/surfer';
 import { createInputState } from '../src/game/input/inputState';
-import { sampleWave } from '../src/game/simulation/waves';
+import { sampleWave, sampleWaveSet } from '../src/game/simulation/waves';
 import { dampAngle } from '../src/render/world';
 import {
+  getBoardWaterProbePose,
   getOrganicBoardTrim,
   getSurferPoseTargets,
   getSurferRenderBank,
@@ -11,6 +12,7 @@ import {
   getSurferVisualHeight,
 } from '../src/render/surferModel';
 import { getBoardWaterContact, isBoardAirborne } from '../src/render/waterContact';
+import { getBoardWaterDeformation, getWakeStampDeformation } from '../src/render/ocean';
 
 describe('surfer simulation', () => {
   it('builds speed and stoke when pumping down the wave', () => {
@@ -149,6 +151,40 @@ describe('surfer simulation', () => {
   });
 });
 
+describe('wave set strips', () => {
+  it('adds chaseable high-energy wave bands to the shared wave sampler', () => {
+    const calm = sampleWaveSet(0, 36, 0);
+    const strip = sampleWaveSet(0, -8, 0);
+    const wave = sampleWave(0, -8, 0);
+
+    expect(strip.height).toBeGreaterThan(calm.height + 1.4);
+    expect(strip.crestStrength).toBeGreaterThan(0.6);
+    expect(wave.facePower).toBeGreaterThan(0.8);
+  });
+
+  it('moves the wave bands through the world over time', () => {
+    const firstPeak = findWaveSetPeakZ(0, -80, 20);
+    const laterPeak = findWaveSetPeakZ(3, -80, 20);
+
+    expect(laterPeak).toBeLessThan(firstPeak - 12);
+  });
+});
+
+function findWaveSetPeakZ(time: number, minZ: number, maxZ: number): number {
+  let bestZ = minZ;
+  let bestHeight = -Infinity;
+
+  for (let z = minZ; z <= maxZ; z += 1) {
+    const height = sampleWaveSet(0, z, time).height;
+    if (height > bestHeight) {
+      bestHeight = height;
+      bestZ = z;
+    }
+  }
+
+  return bestZ;
+}
+
 describe('camera helpers', () => {
   it('damps heading through the shortest wrapped turn', () => {
     const nearlyPositivePi = Math.PI - 0.08;
@@ -176,12 +212,57 @@ describe('camera helpers', () => {
     state.position = { x: -3.2, z: 14.5 };
     state.heading = -0.55;
     state.speed = 12;
+    state.height = sampleWave(state.position.x, state.position.z, 2.4).height;
 
     const trim = getOrganicBoardTrim(state, 2.4);
 
     expect(Math.abs(trim.pitch) + Math.abs(trim.bank)).toBeGreaterThan(0.015);
     expect(Math.abs(trim.pitch)).toBeLessThanOrEqual(0.3);
     expect(Math.abs(trim.bank)).toBeLessThanOrEqual(0.24);
+  });
+
+  it('uses water probe rays to fit board pitch, bank, and support height', () => {
+    const state = createInitialSurferState();
+    state.position = { x: -3.2, z: 14.5 };
+    state.heading = -0.55;
+    state.speed = 12;
+    state.height = sampleWave(state.position.x, state.position.z, 2.4).height;
+
+    const probePose = getBoardWaterProbePose(state, 2.4);
+
+    expect(probePose.contact).toBeGreaterThan(0.8);
+    expect(Math.abs(probePose.pitch) + Math.abs(probePose.bank)).toBeGreaterThan(0.04);
+    expect(probePose.height).toBeLessThan(1.5);
+    expect(probePose.height).toBeGreaterThan(-1.5);
+  });
+
+  it('biases the water probe support toward a heavier tail', () => {
+    const slowState = createInitialSurferState();
+    slowState.position = { x: -3.2, z: 14.5 };
+    slowState.heading = -0.55;
+    slowState.speed = 4;
+    slowState.height = sampleWave(slowState.position.x, slowState.position.z, 2.4).height;
+    const fastState = { ...slowState, position: { ...slowState.position }, speed: 18 };
+
+    const slowProbe = getBoardWaterProbePose(slowState, 2.4);
+    const fastProbe = getBoardWaterProbePose(fastState, 2.4);
+
+    expect(fastProbe.pitch).toBeGreaterThan(slowProbe.pitch);
+    expect(fastProbe.height).toBeLessThan(slowProbe.height);
+  });
+
+  it('cuts probe-driven board contouring while airborne', () => {
+    const state = createInitialSurferState();
+    state.position = { x: -3.2, z: 14.5 };
+    state.heading = -0.55;
+    state.speed = 12;
+    state.height = sampleWave(state.position.x, state.position.z, 2.4).height + 1.2;
+    state.airtime = 0.5;
+    state.verticalVelocity = 1;
+
+    const probePose = getBoardWaterProbePose(state, 2.4);
+
+    expect(probePose.contact).toBe(0);
   });
 });
 
@@ -251,5 +332,73 @@ describe('surfer pose targets', () => {
 
     expect(getSurferPoseTargets(start, 1).some((target) => target.name === 'start-jump' && target.weight > 0.5)).toBe(true);
     expect(getSurferPoseTargets(air, 1).some((target) => target.name === 'air-jump' && target.weight > 0.4)).toBe(true);
+  });
+});
+
+describe('ocean board deformation', () => {
+  it('depresses the water under a skimming board', () => {
+    const state = createInitialSurferState();
+    state.position = { x: 0, z: 0 };
+    state.height = 0;
+    state.heading = 0;
+    state.speed = 10;
+
+    const deformation = getBoardWaterDeformation(0, 0, 0, state);
+
+    expect(deformation.heightOffset).toBeLessThan(0);
+    expect(deformation.alpha).toBeGreaterThan(0.4);
+  });
+
+  it('cuts the local water deformation while airborne', () => {
+    const state = createInitialSurferState();
+    state.position = { x: 0, z: 0 };
+    state.height = 0;
+    state.heading = 0;
+    state.speed = 10;
+    state.airtime = 0.5;
+    state.verticalVelocity = 1;
+
+    const deformation = getBoardWaterDeformation(0, 0, 0, state);
+
+    expect(deformation.heightOffset).toBe(0);
+    expect(deformation.alpha).toBe(0);
+  });
+
+  it('keeps the strongest live deformation under and behind the board', () => {
+    const state = createInitialSurferState();
+    state.position = { x: 0, z: 0 };
+    state.height = 0;
+    state.heading = 0;
+    state.speed = 10;
+
+    const nose = getBoardWaterDeformation(0, -2.1, 0, state);
+    const tail = getBoardWaterDeformation(0, 2.1, 0, state);
+
+    expect(Math.abs(tail.heightOffset)).toBeGreaterThan(Math.abs(nose.heightOffset));
+  });
+
+  it('fades stamped wake deformation back toward the original wave', () => {
+    const fresh = getWakeStampDeformation(0, 0, {
+      x: 0,
+      z: 0,
+      heading: 0,
+      age: 0,
+      lifetime: 1,
+      strength: 1,
+      width: 0.6,
+      length: 1.2,
+    });
+    const faded = getWakeStampDeformation(0, 0, {
+      x: 0,
+      z: 0,
+      heading: 0,
+      age: 0.95,
+      lifetime: 1,
+      strength: 1,
+      width: 0.6,
+      length: 1.2,
+    });
+
+    expect(Math.abs(faded.heightOffset)).toBeLessThan(Math.abs(fresh.heightOffset) * 0.01);
   });
 });
