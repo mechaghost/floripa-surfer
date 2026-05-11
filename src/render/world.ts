@@ -7,6 +7,7 @@ import {
   Group,
   Mesh,
   MeshBasicMaterial,
+  MeshStandardMaterial,
   PerspectiveCamera,
   Scene,
   SphereGeometry,
@@ -32,7 +33,7 @@ export type World = {
 export function createWorld(): World {
   const scene = new Scene();
   scene.background = null;
-  scene.fog = new Fog('#b8eef5', 28, 155);
+  scene.fog = new Fog('#bceff4', 34, 170);
 
   const camera = new PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 400);
   const lookTarget = new Vector3();
@@ -40,10 +41,10 @@ export function createWorld(): World {
   let cameraHeading = 0;
   let lookHeading = 0;
 
-  const ambient = new AmbientLight('#d7fbff', 1.4);
+  const ambient = new AmbientLight('#e6ffff', 1.55);
   scene.add(ambient);
 
-  const sun = new DirectionalLight('#fff2cc', 3.4);
+  const sun = new DirectionalLight('#fff8d6', 3.65);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
   sun.shadow.camera.left = -8;
@@ -116,10 +117,39 @@ export function dampAngle(current: number, target: number, smoothing: number, dt
 
 function createFloripaBackdrop(): Group {
   const group = new Group();
-  const sandMaterial = new MeshBasicMaterial({ color: '#cbd793', transparent: true, opacity: 0.5 });
-  const hillMaterial = new MeshBasicMaterial({ color: '#6aa982', transparent: true, opacity: 0.46 });
-  const farHillMaterial = new MeshBasicMaterial({ color: '#86b89c', transparent: true, opacity: 0.3 });
-  const rockMaterial = new MeshBasicMaterial({ color: '#91947f', transparent: true, opacity: 0.34 });
+  const sandMaterial = new MeshStandardMaterial({
+    color: '#d2eadf',
+    roughness: 0.86,
+    flatShading: true,
+    transparent: true,
+    opacity: 0.54,
+  });
+  const hillMaterial = new MeshStandardMaterial({
+    color: '#58a6a5',
+    roughness: 0.82,
+    flatShading: true,
+    transparent: true,
+    opacity: 0.45,
+  });
+  const farHillMaterial = new MeshStandardMaterial({
+    color: '#9ad6d3',
+    roughness: 0.9,
+    flatShading: true,
+    transparent: true,
+    opacity: 0.32,
+  });
+  const rockMaterial = new MeshStandardMaterial({
+    color: '#d7f1ee',
+    roughness: 0.78,
+    flatShading: true,
+    transparent: true,
+    opacity: 0.42,
+  });
+  const breakerMaterial = new MeshBasicMaterial({
+    color: '#f0ffff',
+    transparent: true,
+    opacity: 0.58,
+  });
 
   const beach = new Mesh(new BoxGeometry(420, 0.8, 8), sandMaterial);
   beach.position.set(0, -0.65, -168);
@@ -127,14 +157,14 @@ function createFloripaBackdrop(): Group {
   group.add(beach);
 
   for (let i = 0; i < 7; i += 1) {
-    const farHill = new Mesh(new SphereGeometry(16 + i * 1.1, 18, 8), farHillMaterial);
+    const farHill = new Mesh(new SphereGeometry(16 + i * 1.1, 7, 4), farHillMaterial);
     farHill.position.set(-150 + i * 48, -1.6, -205 - Math.sin(i * 0.8) * 10);
     farHill.scale.set(1.8, 0.34 + (i % 2) * 0.08, 0.5);
     group.add(farHill);
   }
 
   for (let i = 0; i < 9; i += 1) {
-    const hill = new Mesh(new SphereGeometry(13 + i * 0.8, 18, 8), hillMaterial);
+    const hill = new Mesh(new SphereGeometry(13 + i * 0.8, 8, 5), hillMaterial);
     hill.position.set(-140 + i * 35, -1.45, -184 - Math.sin(i) * 9);
     hill.scale.set(1.55, 0.4 + (i % 3) * 0.07, 0.52);
     hill.receiveShadow = true;
@@ -147,6 +177,14 @@ function createFloripaBackdrop(): Group {
     rock.rotation.y = i * 0.8;
     rock.castShadow = true;
     group.add(rock);
+  }
+
+  for (let i = 0; i < 18; i += 1) {
+    const breaker = new Mesh(new BoxGeometry(8 + (i % 5) * 3.2, 0.08, 0.24), breakerMaterial);
+    breaker.position.set(-205 + i * 24, 0.55 + Math.sin(i * 1.7) * 0.16, -138 - Math.sin(i * 0.9) * 9);
+    breaker.rotation.y = Math.sin(i * 1.23) * 0.16;
+    breaker.rotation.z = Math.sin(i * 0.6) * 0.03;
+    group.add(breaker);
   }
 
   return group;

@@ -11,7 +11,6 @@ export type ActiveTrick = {
   name: string;
   timer: number;
   duration: number;
-  score: number;
   spin: number;
 };
 
@@ -26,9 +25,6 @@ export type SurferState = {
   airtime: number;
   verticalVelocity: number;
   activeTrick: ActiveTrick | null;
-  combo: number;
-  score: number;
-  faceScore: number;
   stoke: number;
   wipeoutTimer: number;
 };
@@ -45,9 +41,6 @@ export function createInitialSurferState(): SurferState {
     airtime: 0,
     verticalVelocity: 0,
     activeTrick: null,
-    combo: 1,
-    score: 0,
-    faceScore: 0,
     stoke: 0.45,
     wipeoutTimer: 0,
   };
@@ -104,18 +97,10 @@ export function updateSurfer(state: SurferState, input: InputState, wave: WaveSa
   if (next.activeTrick) {
     next.activeTrick.timer += dt;
     if (next.activeTrick.timer >= next.activeTrick.duration) {
-      if (next.activeTrick.score > 0) {
-        const landingBonus = next.airtime > 0 ? 1.15 : 0.85;
-        next.score += Math.round(next.activeTrick.score * next.combo * landingBonus);
-        next.stoke = clamp(next.stoke + 0.18, 0, 1);
-      }
       next.activeTrick = null;
     }
   }
 
-  const faceGain = wave.facePower * next.speed * dt * 0.55;
-  next.faceScore += faceGain;
-  next.score += faceGain;
   next.stoke = clamp(next.stoke + wave.facePower * 0.045 * dt - 0.018 * dt, 0, 1);
 
   const outOfPocket = wave.facePower < 0.12 && next.speed < 6;
@@ -129,7 +114,6 @@ function createJumpAction(lipPower: number): ActiveTrick {
     name: 'Jump',
     timer: 0,
     duration: 0.36 + lipPower * 0.08,
-    score: 0,
     spin: 0,
   };
 }

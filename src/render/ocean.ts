@@ -1,5 +1,6 @@
 import {
   BufferAttribute,
+  BufferGeometry,
   Color,
   Mesh,
   PlaneGeometry,
@@ -12,16 +13,21 @@ import {
 import { sampleWave } from '../game/simulation/waves';
 
 export type Ocean = {
-  mesh: Mesh<PlaneGeometry, ShaderMaterial>;
+  mesh: Mesh<BufferGeometry, ShaderMaterial>;
   update: (time: number, center: { x: number; z: number }) => void;
 };
 
-const deep = new Color('#04516a');
-const face = new Color('#0ca8bd');
-const foam = new Color('#effdff');
+const deep = new Color('#00677b');
+const shadow = new Color('#05495f');
+const face = new Color('#06a7b8');
+const brightFace = new Color('#60d1d6');
+const foam = new Color('#f2ffff');
+const VISUAL_CENTER_SMOOTHING = 0.55;
+const WATER_DEPTH_OFFSET_FACTOR = 1;
+const WATER_DEPTH_OFFSET_UNITS = 2;
 
 export function createOcean(): Ocean {
-  const geometry = new PlaneGeometry(260, 230, 116, 96);
+  const geometry = new PlaneGeometry(300, 250, 86, 64);
   geometry.rotateX(-Math.PI / 2);
 
   const colors = new Float32Array(geometry.attributes.position.count * 3);
@@ -89,51 +95,79 @@ export function createOcean(): Ocean {
       void main() {
         vec3 normal = normalize(vNormal);
         vec3 viewDirection = normalize(cameraPosition - vWorldPosition);
-        float fresnel = pow(1.0 - max(dot(normal, viewDirection), 0.0), 2.2);
-        float sun = pow(max(dot(reflect(-uSunDirection, normal), viewDirection), 0.0), 34.0);
-        float softSun = pow(max(dot(normal, uSunDirection), 0.0), 1.35);
+        float fresnel = pow(1.0 - max(dot(normal, viewDirection), 0.0), 2.0);
+        float sun = pow(max(dot(reflect(-uSunDirection, normal), viewDirection), 0.0), 26.0);
+        float softSun = pow(max(dot(normal, uSunDirection), 0.0), 1.15);
+        float facetLight = clamp(normal.y * 0.62 + normal.z * 0.16 + 0.42, 0.0, 1.0);
 
         vec2 p = vWorldPosition.xz;
-        float microRipples =
-          waveLine(p + vec2(0.0, uTime * 0.55), 0.82, 1.9, 0.12) * 0.28 +
-          waveLine(p.yx + vec2(uTime * 0.22, 0.0), 1.34, -1.2, 0.08) * 0.18 +
-          waveLine(p + vec2(12.0, -5.0), 2.7, 2.65, 0.045) * 0.12;
+        float longFoamLines =
+          waveLine(p + vec2(0.0, uTime * 0.25), 0.17, 0.42, 0.035) * 0.34 +
+          waveLine(p.yx + vec2(uTime * 0.18, 0.0), 0.24, -0.35, 0.03) * 0.2;
 
         float crest = smoothstep(0.48, 0.92, vColor.b - max(vColor.r, vColor.g) * 0.22);
-        vec3 water = mix(uDeep, uFace, clamp(vColor.g * 1.35 + softSun * 0.24, 0.0, 1.0));
-        water = mix(water, vColor, 0.44);
-        water += vec3(0.08, 0.17, 0.19) * fresnel;
-        water += vec3(0.05, 0.1, 0.12) * microRipples;
-        water += vec3(1.0, 0.92, 0.72) * sun * 0.38;
-        water = mix(water, uFoam, clamp(crest * 0.72 + microRipples * crest * 0.4, 0.0, 0.92));
+        vec3 water = mix(uDeep, uFace, clamp(vColor.g * 1.18 + softSun * 0.16, 0.0, 1.0));
+        water = mix(water, vColor, 0.7);
+        water *= 0.76 + facetLight * 0.38;
+        water += vec3(0.08, 0.2, 0.22) * fresnel;
+        water += vec3(0.08, 0.14, 0.14) * longFoamLines;
+        water += vec3(1.0, 0.96, 0.78) * sun * 0.28;
+        water = mix(water, uFoam, clamp(crest * 0.64 + longFoamLines * crest * 0.38, 0.0, 0.86));
 
         float castShadow = 1.0 - getShadowMask();
-        water *= 1.0 - castShadow * 0.48;
-        water = mix(water, vec3(0.015, 0.18, 0.23), castShadow * 0.22);
+        water *= 1.0 - castShadow * 0.34;
+        water = mix(water, vec3(0.02, 0.2, 0.25), castShadow * 0.16);
 
         gl_FragColor = vec4(water, 1.0);
       }
     `,
   });
+  material.polygonOffset = true;
+  material.polygonOffsetFactor = WATER_DEPTH_OFFSET_FACTOR;
+  material.polygonOffsetUnits = WATER_DEPTH_OFFSET_UNITS;
 
   const mesh = new Mesh(geometry, material);
   mesh.receiveShadow = true;
+  const tint = new Color();
+  let visualCenterX = 0;
+  let visualCenterZ = 0;
+  let previousUpdateTime: number | null = null;
+  let initialized = false;
 
   function update(time: number, center: { x: number; z: number }): void {
     const position = geometry.attributes.position;
     const color = geometry.attributes.color;
-    mesh.position.set(center.x, 0, center.z);
+    const dt = previousUpdateTime === null ? 1 / 60 : Math.min(1 / 15, Math.max(0, time - previousUpdateTime));
+    previousUpdateTime = time;
+    if (!initialized) {
+      visualCenterX = center.x;
+      visualCenterZ = center.z;
+      initialized = true;
+    } else {
+      visualCenterX = dampValue(visualCenterX, center.x, VISUAL_CENTER_SMOOTHING, dt);
+      visualCenterZ = dampValue(visualCenterZ, center.z, VISUAL_CENTER_SMOOTHING, dt);
+    }
+    mesh.position.set(visualCenterX, 0, visualCenterZ);
     material.uniforms.uTime.value = time;
 
     for (let i = 0; i < position.count; i += 1) {
       const x = position.getX(i);
       const z = position.getZ(i);
-      const wave = sampleWave(x + center.x, z + center.z, time);
+      const worldX = x + visualCenterX;
+      const worldZ = z + visualCenterZ;
+      const wave = sampleWave(worldX, worldZ, time);
       position.setY(i, wave.height);
 
-      const chop = Math.sin((x + center.x) * 0.85 + (z + center.z) * 0.34 + time * 3.2) * 0.5 + 0.5;
-      const highlight = Math.min(1, wave.lipPower * 0.58 + chop * wave.facePower * 0.14);
-      const tint = deep.clone().lerp(face, wave.facePower * 0.88).lerp(foam, highlight);
+      const broadShade = Math.sin(worldX * 0.035 + worldZ * 0.048 + time * 0.025) * 0.5 + 0.5;
+      const crossShade = Math.sin(worldX * 0.09 - worldZ * 0.025 + time * 0.045) * 0.5 + 0.5;
+      const longBand = Math.sin(worldX * 0.07 + worldZ * 0.11 + time * 0.22) * 0.5 + 0.5;
+      const colorMix = Math.min(1, wave.facePower * 0.78 + Math.max(0, wave.height) * 0.06 + broadShade * 0.08);
+      const highlight = Math.min(1, wave.lipPower * 0.42 + Math.pow(longBand, 5) * wave.facePower * 0.24);
+      tint.copy(deep).lerp(face, colorMix).lerp(brightFace, crossShade * 0.08);
+      if (broadShade < 0.2) {
+        tint.lerp(shadow, 0.08);
+      }
+      tint.lerp(foam, highlight);
       color.setXYZ(i, tint.r, tint.g, tint.b);
     }
 
@@ -143,4 +177,8 @@ export function createOcean(): Ocean {
   }
 
   return { mesh, update };
+}
+
+function dampValue(current: number, target: number, smoothing: number, dt: number): number {
+  return current + (target - current) * (1 - Math.exp(-smoothing * dt));
 }

@@ -35,6 +35,9 @@ const BOARD_HULL_CLEARANCE = 0.02;
 const BOARD_SURFACE_LENGTH = 2.9;
 const BOARD_SURFACE_WIDTH = 0.82;
 const BOARD_FIN_PROTRUSION_SCALE = 0.32;
+const BOARD_DEPTH_OFFSET_FACTOR = -1.25;
+const BOARD_DEPTH_OFFSET_UNITS = -4;
+const BOARD_RENDER_ORDER = 8;
 const MAX_VISUAL_PITCH = 0.42;
 const MAX_VISUAL_BANK = 0.82;
 const FOOT_DECK_CLEARANCE = 0.018;
@@ -135,6 +138,8 @@ export function createSurferModel(): SurferModel {
     metalness: 0.05,
   });
   const railMaterial = new MeshStandardMaterial({ color: '#fe5f55', roughness: 0.45 });
+  applyBoardDepthBias(boardMaterial);
+  applyBoardDepthBias(railMaterial);
   const skinMaterial = new MeshStandardMaterial({ color: '#b86f4f', roughness: 0.55 });
   const suitMaterial = new MeshStandardMaterial({ color: '#14213d', roughness: 0.5 });
 
@@ -142,11 +147,13 @@ export function createSurferModel(): SurferModel {
   board.rotation.x = Math.PI / 2;
   board.scale.set(0.78, 0.16, 1);
   board.castShadow = true;
+  board.renderOrder = BOARD_RENDER_ORDER;
   fallback.add(board);
 
   const stripe = new Mesh(new BoxGeometry(0.08, 0.06, 2.45), railMaterial);
   stripe.position.y = 0.11;
   stripe.castShadow = true;
+  stripe.renderOrder = BOARD_RENDER_ORDER + 1;
   fallback.add(stripe);
 
   const torso = new Mesh(new CapsuleGeometry(0.28, 0.55, 6, 12), suitMaterial);
@@ -361,6 +368,7 @@ function prepareBoard(model: Object3D): Group {
   model.rotation.set(-Math.PI / 2, -Math.PI / 2, 0);
   shortenBoardFins(model);
   placeBoardOnHull(model);
+  applyBoardDepthBiasToObject(model);
   model.position.y += BOARD_HULL_CLEARANCE;
   wrapper.add(model);
   wrapper.rotation.x = -0.05;
@@ -416,6 +424,28 @@ function setRuntimeFlags(model: Object3D): void {
       child.receiveShadow = true;
     }
   });
+}
+
+function applyBoardDepthBiasToObject(model: Object3D): void {
+  model.traverse((child) => {
+    if (!(child instanceof Mesh)) {
+      return;
+    }
+
+    child.renderOrder = BOARD_RENDER_ORDER;
+    const materials = Array.isArray(child.material) ? child.material : [child.material];
+    for (const material of materials) {
+      if (material instanceof MeshStandardMaterial) {
+        applyBoardDepthBias(material);
+      }
+    }
+  });
+}
+
+function applyBoardDepthBias(material: MeshStandardMaterial): void {
+  material.polygonOffset = true;
+  material.polygonOffsetFactor = BOARD_DEPTH_OFFSET_FACTOR;
+  material.polygonOffsetUnits = BOARD_DEPTH_OFFSET_UNITS;
 }
 
 function placeBoardOnHull(model: Object3D): void {

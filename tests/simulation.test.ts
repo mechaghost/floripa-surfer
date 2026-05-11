@@ -13,7 +13,7 @@ import {
 import { getBoardWaterContact, isBoardAirborne } from '../src/render/waterContact';
 
 describe('surfer simulation', () => {
-  it('builds speed and face score when pumping down the wave', () => {
+  it('builds speed and stoke when pumping down the wave', () => {
     const state = createInitialSurferState();
     const input = createInputState();
     input.forward = 1;
@@ -22,7 +22,6 @@ describe('surfer simulation', () => {
     const next = updateSurfer(state, input, wave, 0.5);
 
     expect(next.speed).toBeGreaterThan(state.speed);
-    expect(next.faceScore).toBeGreaterThan(state.faceScore);
     expect(next.stoke).toBeGreaterThan(state.stoke);
   });
 
@@ -64,7 +63,6 @@ describe('surfer simulation', () => {
     expect(jumped.activeTrick?.name).toBe('Jump');
     expect(jumped.airtime).toBeGreaterThan(0);
     expect(jumped.verticalVelocity).toBeGreaterThan(0);
-    expect(jumped.combo).toBe(state.combo);
   });
 
   it('keeps a jump vertical instead of pitching the board up', () => {
@@ -243,7 +241,7 @@ describe('surfer pose targets', () => {
 
   it('maps jump startup and airtime to separate pose states', () => {
     const start = createInitialSurferState();
-    start.activeTrick = { name: 'Jump', timer: 0.03, duration: 0.4, score: 0, spin: 0 };
+    start.activeTrick = { name: 'Jump', timer: 0.03, duration: 0.4, spin: 0 };
     start.airtime = 0.8;
     start.verticalVelocity = 4;
     const air = createInitialSurferState();

@@ -6,7 +6,7 @@ export type TouchControls = {
   dispose: () => void;
 };
 
-export function createTouchControls(input: InputState): TouchControls {
+export function createTouchControls(input: InputState, target: HTMLElement): TouchControls {
   const root = document.createElement('div');
   root.className = 'touch';
   root.setAttribute('aria-label', 'Surf controls. Drag to carve, tap to jump.');
@@ -97,7 +97,7 @@ export function createTouchControls(input: InputState): TouchControls {
     lastX = event.clientX;
     lastY = event.clientY;
     isDragging = false;
-    capturePointer(root, event.pointerId);
+    capturePointer(target, event.pointerId);
   };
 
   const onPointerMove = (event: PointerEvent) => {
@@ -136,17 +136,17 @@ export function createTouchControls(input: InputState): TouchControls {
     }
   };
 
-  root.addEventListener('pointerdown', onPointerDown);
-  root.addEventListener('pointermove', onPointerMove);
-  root.addEventListener('pointerup', onPointerUp);
-  root.addEventListener('pointercancel', onPointerCancel);
-  root.addEventListener('lostpointercapture', onPointerCancel);
+  target.addEventListener('pointerdown', onPointerDown);
+  target.addEventListener('pointermove', onPointerMove);
+  target.addEventListener('pointerup', onPointerUp);
+  target.addEventListener('pointercancel', onPointerCancel);
+  target.addEventListener('lostpointercapture', onPointerCancel);
   disposers.push(() => {
-    root.removeEventListener('pointerdown', onPointerDown);
-    root.removeEventListener('pointermove', onPointerMove);
-    root.removeEventListener('pointerup', onPointerUp);
-    root.removeEventListener('pointercancel', onPointerCancel);
-    root.removeEventListener('lostpointercapture', onPointerCancel);
+    target.removeEventListener('pointerdown', onPointerDown);
+    target.removeEventListener('pointermove', onPointerMove);
+    target.removeEventListener('pointerup', onPointerUp);
+    target.removeEventListener('pointercancel', onPointerCancel);
+    target.removeEventListener('lostpointercapture', onPointerCancel);
     if (jumpTimer !== null) {
       window.clearTimeout(jumpTimer);
     }
