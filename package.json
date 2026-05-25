@@ -7,10 +7,12 @@
     "dev": "vite --host 127.0.0.1",
     "build": "tsc && vite build",
     "test": "vitest run",
-    "preview": "vite preview --host 127.0.0.1"
+    "preview": "vite preview --host 127.0.0.1",
+    "start": "serve -s dist -l tcp://0.0.0.0:${PORT:-3000}"
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "^0.10.35",
+    "serve": "^14.2.6",
     "three": "^0.181.2"
   },
   "devDependencies": {
