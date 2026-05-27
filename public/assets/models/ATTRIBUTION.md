@@ -33,3 +33,19 @@ These candidate GLB files were downloaded while selecting a mobile-friendly surf
 - Source: https://poly.pizza/m/1fO5eIr7_o0
 - Format: GLB
 - License: Creative Commons Attribution 3.0
+
+## `dolphin-quaternius.glb`
+
+- Title: Dolphin
+- Creator: Quaternius
+- Source: https://poly.pizza/m/3LzFgI3GLO
+- Format: GLB
+- License: Public Domain (CC0)
+
+## `turtle-polygonalmind.glb`
+
+- Title: Turtle Character
+- Creator: Polygonal Mind
+- Source: https://poly.pizza/m/xmwfRzGvPv
+- Format: GLB
+- License: Public Domain (CC0)

@@ -30,6 +30,7 @@ import { createInitialSurferState, updateSurfer } from './game/simulation/surfer
 import { sampleWave } from './game/simulation/waves';
 import { createOcean } from './render/ocean';
 import { createPoseEditorView } from './render/poseEditor';
+import { createSeaLife } from './render/sealife';
 import { createSurferModel, getSurferRenderHeading } from './render/surferModel';
 import { getBoardWaterContact } from './render/waterContact';
 import { createWorld } from './render/world';
@@ -89,6 +90,7 @@ const spray = createSpray();
 const contactFoam = createBoardContactFoam();
 const wake = createBoardWake();
 const waterCues = createWaterMotionCues();
+const seaLife = createSeaLife();
 const input = createInputState();
 const audio = createAudio();
 const hud = createHud({
@@ -102,7 +104,7 @@ const clock = new Clock();
 let surferState = createInitialSurferState();
 let elapsed = 0;
 
-scene.add(ocean.mesh, contactFoam.root, wake.root, surfer.root, spray.root, waterCues.root);
+scene.add(ocean.mesh, contactFoam.root, wake.root, surfer.root, spray.root, waterCues.root, seaLife.root);
 shell.append(hud.root, touchControls.root, poseEditorLink);
 
 window.addEventListener('resize', resize);
@@ -124,6 +126,7 @@ function tick(): void {
   wake.update(surferState, currentWave.lipPower, elapsed, dt);
   spray.update(surferState, currentWave.lipPower, elapsed);
   waterCues.update(surferState, elapsed);
+  seaLife.update(surferState, elapsed, dt);
   updateCamera(surferState, dt);
   hud.update(surferState);
   audio.update(surferState, currentWave, input, dt);
