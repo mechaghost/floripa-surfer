@@ -23,6 +23,7 @@ import {
   WebGLRenderer,
 } from 'three';
 import './styles.css';
+import { createAudio } from './audio/audio';
 import { attachKeyboard, createInputState } from './game/input/inputState';
 import type { SurferState } from './game/simulation/surfer';
 import { createInitialSurferState, updateSurfer } from './game/simulation/surfer';
@@ -89,7 +90,11 @@ const contactFoam = createBoardContactFoam();
 const wake = createBoardWake();
 const waterCues = createWaterMotionCues();
 const input = createInputState();
-const hud = createHud();
+const audio = createAudio();
+const hud = createHud({
+  initialMuted: audio.getMuted(),
+  onMuteToggle: (muted) => audio.setMuted(muted),
+});
 const touchControls = createTouchControls(input);
 const poseEditorLink = createPoseEditorLink();
 const detachKeyboard = attachKeyboard(input);
@@ -121,6 +126,7 @@ function tick(): void {
   waterCues.update(surferState, elapsed);
   updateCamera(surferState, dt);
   hud.update(surferState);
+  audio.update(surferState, currentWave, input, dt);
   renderer.render(scene, camera);
 }
 
@@ -137,6 +143,7 @@ function dispose(): void {
   window.removeEventListener('resize', resize);
   detachKeyboard();
   touchControls.dispose();
+  audio.dispose();
   renderer.dispose();
 }
 
