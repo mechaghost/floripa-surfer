@@ -49,6 +49,9 @@ export type SurferState = {
   barrelTime: number;
   lastBarrelDuration: number;
   barrelFlash: number;
+  pumpEffort: number;
+  churn: number;
+  landImpact: number;
 };
 
 export function createInitialSurferState(): SurferState {
@@ -70,6 +73,9 @@ export function createInitialSurferState(): SurferState {
     barrelTime: 0,
     lastBarrelDuration: 0,
     barrelFlash: 0,
+    pumpEffort: 0,
+    churn: 0,
+    landImpact: 0,
   };
 }
 
@@ -141,6 +147,8 @@ export function updateSurfer(state: SurferState, input: InputState, wave: WaveSa
     next.verticalVelocity = Math.max(fallCap, next.verticalVelocity - gravity * dt);
     const nextHeight = state.height + next.verticalVelocity * dt;
     if (next.verticalVelocity <= 0 && nextHeight <= wave.height + LANDING_SURFACE_EPSILON) {
+      const impact = clamp((-next.verticalVelocity - 1.6) / 5.5, 0, 1);
+      next.landImpact = Math.max(state.landImpact, impact);
       next.verticalVelocity = 0;
       next.airtime = 0;
       next.height = wave.height;
@@ -177,6 +185,12 @@ export function updateSurfer(state: SurferState, input: InputState, wave: WaveSa
     next.barrelTime = 0;
   }
   next.barrelFlash = Math.max(0, flash - dt / 2.4);
+
+  // Smoothed animation drivers: how hard the rider is pumping, how much
+  // churned water they are in, and a decaying landing-impact pulse.
+  next.pumpEffort = damp(state.pumpEffort, clamp(pump, 0, 1), 6, dt);
+  next.churn = damp(state.churn, wave.whitewater, 5, dt);
+  next.landImpact = Math.max(0, next.landImpact - dt * 2.2);
 
   next.stoke = clamp(
     next.stoke +

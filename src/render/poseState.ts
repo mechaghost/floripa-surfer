@@ -5,7 +5,15 @@ export const RIDER_ASSET_URL = '/assets/models/woman-tank-top-quaternius.glb';
 export const POSE_STORAGE_KEY = 'floripa-surfer-pose-editor';
 export const DEFAULT_POSE_STATE = 'default';
 export const IDLE_POSE_STATES = ['idle-1', 'idle-2', 'idle-3', 'idle-4'] as const;
-export const SURF_POSE_STATES = ['left-lean', 'right-lean', 'start-jump', 'air-jump'] as const;
+export const SURF_POSE_STATES = [
+  'left-lean',
+  'right-lean',
+  'start-jump',
+  'air-jump',
+  'barrel-tuck',
+  'speed-crouch',
+  'brace',
+] as const;
 export const CANONICAL_POSE_STATES = [
   DEFAULT_POSE_STATE,
   ...IDLE_POSE_STATES,
