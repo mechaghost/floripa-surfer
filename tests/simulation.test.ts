@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { createInitialSurferState, updateSurfer } from '../src/game/simulation/surfer';
 import { createInputState } from '../src/game/input/inputState';
-import { sampleWave, sampleWaveSet } from '../src/game/simulation/waves';
+import {
+  BREAKER_TRAVEL,
+  PEEL_DIRECTION,
+  getPocketWorldPosition,
+  sampleFoamField,
+  sampleSurface,
+  sampleWave,
+  sampleWaveSet,
+  type WaveSample,
+} from '../src/game/simulation/waves';
 import { dampAngle } from '../src/render/world';
 import {
   getBoardWaterProbePose,
@@ -14,13 +23,47 @@ import {
 import { getBoardWaterContact, isBoardAirborne } from '../src/render/waterContact';
 import { getBoardWaterDeformation, getWakeStampDeformation } from '../src/render/ocean';
 
+const WAVE_DIR_X = -BREAKER_TRAVEL.x;
+const WAVE_DIR_Z = -BREAKER_TRAVEL.z;
+
+function makeWave(overrides: Partial<WaveSample> = {}): WaveSample {
+  return {
+    height: 0,
+    slopeX: 0,
+    slopeZ: 0,
+    lipPower: 0,
+    facePower: 0,
+    curl: 0,
+    whitewater: 0,
+    barrelDepth: 0,
+    peel: 0,
+    ...overrides,
+  };
+}
+
+// A world point offset from the crest above the current pocket: faceOffset
+// moves along the wave travel axis (negative = down the face, shoreward of the
+// crest), peelOffset moves along the crest (positive = deeper into the
+// broken/barrel side). getPocketWorldPosition returns the porch on the face
+// (s = -3.2), so re-anchor to the crest first.
+const POCKET_PORCH_OFFSET = 3.2;
+
+function pointNearPocket(time: number, faceOffset: number, peelOffset: number): { x: number; z: number } {
+  const pocket = getPocketWorldPosition(time, 0, 0);
+  const anchored = faceOffset + POCKET_PORCH_OFFSET;
+  return {
+    x: pocket.x + WAVE_DIR_X * anchored - PEEL_DIRECTION.x * peelOffset,
+    z: pocket.z + WAVE_DIR_Z * anchored - PEEL_DIRECTION.z * peelOffset,
+  };
+}
+
 describe('surfer simulation', () => {
   it('builds speed and stoke when pumping down the wave', () => {
     const state = createInitialSurferState();
     const input = createInputState();
     input.forward = 1;
 
-    const wave = sampleWave(state.position.x, state.position.z, 1.2);
+    const wave = makeWave({ height: 1.2, facePower: 0.8, lipPower: 0.3 });
     const next = updateSurfer(state, input, wave, 0.5);
 
     expect(next.speed).toBeGreaterThan(state.speed);
@@ -32,7 +75,7 @@ describe('surfer simulation', () => {
     const input = createInputState();
     input.left = 1;
 
-    const wave = sampleWave(state.position.x, state.position.z, 2);
+    const wave = makeWave({ facePower: 0.6 });
     const next = updateSurfer(state, input, wave, 0.25);
 
     expect(next.turn).toBeLessThan(0);
@@ -45,7 +88,7 @@ describe('surfer simulation', () => {
     const input = createInputState();
     input.right = 1;
 
-    const wave = sampleWave(state.position.x, state.position.z, 2);
+    const wave = makeWave({ facePower: 0.6 });
     const next = updateSurfer(state, input, wave, 0.25);
 
     expect(next.turn).toBeGreaterThan(0);
@@ -59,7 +102,7 @@ describe('surfer simulation', () => {
     input.trick = true;
     input.trickUp = true;
 
-    const flatWave = { height: 0, slopeX: 0, slopeZ: 0, lipPower: 0.1, facePower: 0.2 };
+    const flatWave = makeWave({ lipPower: 0.1, facePower: 0.2 });
     const jumped = updateSurfer(state, input, flatWave, 0.16);
 
     expect(jumped.activeTrick?.name).toBe('Jump');
@@ -72,7 +115,7 @@ describe('surfer simulation', () => {
     const input = createInputState();
     input.trick = true;
 
-    const flatWave = { height: 0, slopeX: 0, slopeZ: 0, lipPower: 0.1, facePower: 0.2 };
+    const flatWave = makeWave({ lipPower: 0.1, facePower: 0.2 });
     const jumped = updateSurfer(state, input, flatWave, 0.16);
     const airborne = updateSurfer(jumped, createInputState(), flatWave, 0.16);
 
@@ -84,7 +127,7 @@ describe('surfer simulation', () => {
     let state = createInitialSurferState();
     const input = createInputState();
     input.trick = true;
-    const flatWave = { height: 0, slopeX: 0, slopeZ: 0, lipPower: 0.1, facePower: 0.2 };
+    const flatWave = makeWave({ lipPower: 0.1, facePower: 0.2 });
 
     state = updateSurfer(state, input, flatWave, 1 / 30);
     input.trick = false;
@@ -101,7 +144,7 @@ describe('surfer simulation', () => {
     let state = createInitialSurferState();
     const input = createInputState();
     input.trick = true;
-    const flatWave = { height: 0, slopeX: 0, slopeZ: 0, lipPower: 0.1, facePower: 0.2 };
+    const flatWave = makeWave({ lipPower: 0.1, facePower: 0.2 });
 
     state = updateSurfer(state, input, flatWave, 1 / 30);
     input.trick = false;
@@ -129,7 +172,7 @@ describe('surfer simulation', () => {
   it('keeps the board close to the water plane on steep wave faces', () => {
     const state = createInitialSurferState();
     const input = createInputState();
-    const steepWave = { height: 1.4, slopeX: 0.08, slopeZ: -1, lipPower: 0.8, facePower: 0.9 };
+    const steepWave = makeWave({ height: 1.4, slopeX: 0.08, slopeZ: -1, lipPower: 0.8, facePower: 0.9 });
 
     const next = updateSurfer(state, input, steepWave, 0.25);
 
@@ -141,7 +184,7 @@ describe('surfer simulation', () => {
     state.position.z = -120;
     state.wipeoutTimer = 3;
     const input = createInputState();
-    const wave = { height: 0.4, slopeX: 0, slopeZ: 0, lipPower: 0.4, facePower: 0.7 };
+    const wave = makeWave({ height: 0.4, lipPower: 0.4, facePower: 0.7 });
 
     const next = updateSurfer(state, input, wave, 0.5);
 
@@ -151,15 +194,94 @@ describe('surfer simulation', () => {
   });
 });
 
+describe('breaking wave field', () => {
+  it('raises a high-energy curling wave at the pocket', () => {
+    const crest = pointNearPocket(0, 0, 0);
+    const atCrest = sampleWave(crest.x, crest.z, 0);
+    const farLateral = sampleWave(crest.x, crest.z + 40, 0);
+
+    expect(atCrest.height).toBeGreaterThan(2.2);
+    expect(atCrest.curl).toBeGreaterThan(0.9);
+    expect(atCrest.lipPower).toBeGreaterThan(0.7);
+    expect(atCrest.height).toBeGreaterThan(farLateral.height + 1.4);
+  });
+
+  it('keeps the shoulder ahead of the peel green and the water behind it broken', () => {
+    const shoulder = pointNearPocket(0, 0, -30);
+    const broken = pointNearPocket(0, 0, 46);
+
+    const shoulderWave = sampleWave(shoulder.x, shoulder.z, 0);
+    const brokenWave = sampleWave(broken.x, broken.z, 0);
+
+    expect(shoulderWave.curl).toBeLessThan(0.05);
+    expect(shoulderWave.whitewater).toBeLessThan(0.05);
+    expect(brokenWave.whitewater).toBeGreaterThan(0.5);
+    expect(brokenWave.curl).toBeLessThan(0.1);
+  });
+
+  it('opens a barrel zone on the face just behind the peel', () => {
+    const inTube = pointNearPocket(0, -2.2, 5);
+    const onShoulder = pointNearPocket(0, -2.2, -25);
+
+    expect(sampleWave(inTube.x, inTube.z, 0).barrelDepth).toBeGreaterThan(0.4);
+    expect(sampleWave(onShoulder.x, onShoulder.z, 0).barrelDepth).toBe(0);
+  });
+
+  it('sweeps the pocket down the line as the wave travels', () => {
+    const first = getPocketWorldPosition(0, 0, 0);
+    const later = getPocketWorldPosition(
+      1,
+      BREAKER_TRAVEL.x * 7.2,
+      BREAKER_TRAVEL.z * 7.2,
+    );
+
+    expect(later.waveIndex).toBe(first.waveIndex);
+    expect(later.x).toBeLessThan(first.x - 6);
+  });
+
+  it('keeps the physics heightfield finite across the play area', () => {
+    for (let x = -60; x <= 60; x += 12) {
+      for (let z = -120; z <= 60; z += 9) {
+        const wave = sampleWave(x, z, 4.2);
+        expect(Number.isFinite(wave.height)).toBe(true);
+        expect(Number.isFinite(wave.slopeX)).toBe(true);
+        expect(Number.isFinite(wave.slopeZ)).toBe(true);
+      }
+    }
+  });
+
+  it('folds the rendered lip forward over the face inside the curl window', () => {
+    const lipPoint = pointNearPocket(0, 1.2, 0);
+    const lip = sampleSurface(lipPoint.x, lipPoint.z, 0);
+    const shoulderPoint = pointNearPocket(0, 1.2, -30);
+    const shoulder = sampleSurface(shoulderPoint.x, shoulderPoint.z, 0);
+
+    expect(lip.offsetZ).toBeLessThan(-0.5);
+    expect(lip.height).toBeLessThan(sampleWave(lipPoint.x, lipPoint.z, 0).height);
+    expect(lip.thin).toBeGreaterThan(0.5);
+    expect(Math.abs(shoulder.offsetZ)).toBeLessThan(0.05);
+    expect(shoulder.thin).toBe(0);
+  });
+
+  it('marks foam over whitewater and the curling crest', () => {
+    const broken = pointNearPocket(0, 0, 46);
+    const shoulder = pointNearPocket(0, 0, -30);
+
+    expect(sampleFoamField(broken.x, broken.z, 0).intensity).toBeGreaterThan(0.4);
+    expect(sampleFoamField(shoulder.x, shoulder.z, 0).intensity).toBeLessThan(0.12);
+  });
+});
+
 describe('wave set strips', () => {
   it('adds chaseable high-energy wave bands to the shared wave sampler', () => {
-    const calm = sampleWaveSet(0, 36, 0);
-    const strip = sampleWaveSet(0, -8, 0);
-    const wave = sampleWave(0, -8, 0);
+    const crest = pointNearPocket(0, 0, 0);
+    const strip = sampleWaveSet(crest.x, crest.z, 0);
+    const calm = sampleWaveSet(crest.x, crest.z + 40, 0);
+    const wave = sampleWave(crest.x, crest.z, 0);
 
     expect(strip.height).toBeGreaterThan(calm.height + 1.4);
     expect(strip.crestStrength).toBeGreaterThan(0.6);
-    expect(wave.facePower).toBeGreaterThan(0.8);
+    expect(wave.facePower).toBeGreaterThan(0.5);
   });
 
   it('moves the wave bands through the world over time', () => {
@@ -185,6 +307,70 @@ function findWaveSetPeakZ(time: number, minZ: number, maxZ: number): number {
   return bestZ;
 }
 
+describe('barrel riding', () => {
+  it('accumulates barrel time and stoke while tucked in the tube', () => {
+    let state = createInitialSurferState();
+    const input = createInputState();
+    const tubeWave = makeWave({ curl: 1, barrelDepth: 0.85, facePower: 0.9, lipPower: 0.6 });
+
+    for (let frame = 0; frame < 40; frame += 1) {
+      state = updateSurfer(state, input, tubeWave, 1 / 30);
+    }
+
+    expect(state.barrelTime).toBeGreaterThan(1);
+    expect(state.barrelDepth).toBeGreaterThan(0.5);
+    expect(state.stoke).toBeGreaterThan(createInitialSurferState().stoke);
+  });
+
+  it('rewards a completed barrel with a flash and remembered duration', () => {
+    let state = createInitialSurferState();
+    const input = createInputState();
+    const tubeWave = makeWave({ curl: 1, barrelDepth: 0.85, facePower: 0.9 });
+
+    for (let frame = 0; frame < 40; frame += 1) {
+      state = updateSurfer(state, input, tubeWave, 1 / 30);
+    }
+    const ridden = state.barrelTime;
+    state = updateSurfer(state, input, makeWave({ facePower: 0.5 }), 1 / 30);
+
+    expect(state.barrelTime).toBe(0);
+    expect(state.lastBarrelDuration).toBeCloseTo(ridden, 5);
+    expect(state.barrelFlash).toBeGreaterThan(0.9);
+  });
+
+  it('carries the surfer down the line inside the pocket', () => {
+    const state = createInitialSurferState();
+    state.heading = 0;
+    const input = createInputState();
+    const pocketWave = makeWave({ curl: 1, barrelDepth: 0.6, facePower: 0.8 });
+
+    const next = updateSurfer(state, input, pocketWave, 0.25);
+    const still = updateSurfer(state, input, makeWave({ facePower: 0.8 }), 0.25);
+
+    expect(next.position.x).toBeLessThan(still.position.x);
+  });
+
+  it('drags and shoves the surfer when caught by whitewater', () => {
+    let churned = createInitialSurferState();
+    let clean = createInitialSurferState();
+    const input = createInputState();
+    input.right = 1;
+    const foamWave = makeWave({ whitewater: 1, facePower: 0.4 });
+    const cleanWave = makeWave({ facePower: 0.4 });
+
+    for (let frame = 0; frame < 60; frame += 1) {
+      churned = updateSurfer(churned, input, foamWave, 1 / 30);
+      clean = updateSurfer(clean, input, cleanWave, 1 / 30);
+    }
+
+    expect(churned.speed).toBeLessThan(6.5);
+    expect(churned.speed).toBeLessThan(clean.speed);
+    expect(churned.turn).toBeLessThan(clean.turn);
+    expect(churned.position.z).toBeLessThan(clean.position.z);
+    expect(churned.wipeoutTimer).toBeGreaterThan(0);
+  });
+});
+
 describe('camera helpers', () => {
   it('damps heading through the shortest wrapped turn', () => {
     const nearlyPositivePi = Math.PI - 0.08;
@@ -209,7 +395,8 @@ describe('camera helpers', () => {
 
   it('adds bounded wave-following trim to board pitch and bank', () => {
     const state = createInitialSurferState();
-    state.position = { x: -3.2, z: 14.5 };
+    const face = pointNearPocket(2.4, -8.5, -24);
+    state.position = { x: face.x, z: face.z };
     state.heading = -0.55;
     state.speed = 12;
     state.height = sampleWave(state.position.x, state.position.z, 2.4).height;
@@ -223,22 +410,24 @@ describe('camera helpers', () => {
 
   it('uses water probe rays to fit board pitch, bank, and support height', () => {
     const state = createInitialSurferState();
-    state.position = { x: -3.2, z: 14.5 };
+    const face = pointNearPocket(2.4, -8.5, -24);
+    state.position = { x: face.x, z: face.z };
     state.heading = -0.55;
     state.speed = 12;
-    state.height = sampleWave(state.position.x, state.position.z, 2.4).height;
+    const centerHeight = sampleWave(state.position.x, state.position.z, 2.4).height;
+    state.height = centerHeight;
 
     const probePose = getBoardWaterProbePose(state, 2.4);
 
     expect(probePose.contact).toBeGreaterThan(0.8);
     expect(Math.abs(probePose.pitch) + Math.abs(probePose.bank)).toBeGreaterThan(0.04);
-    expect(probePose.height).toBeLessThan(1.5);
-    expect(probePose.height).toBeGreaterThan(-1.5);
+    expect(Math.abs(probePose.height - centerHeight)).toBeLessThan(1.5);
   });
 
   it('biases the water probe support toward a heavier tail', () => {
     const slowState = createInitialSurferState();
-    slowState.position = { x: -3.2, z: 14.5 };
+    const face = pointNearPocket(2.4, -8.5, -24);
+    slowState.position = { x: face.x, z: face.z };
     slowState.heading = -0.55;
     slowState.speed = 4;
     slowState.height = sampleWave(slowState.position.x, slowState.position.z, 2.4).height;

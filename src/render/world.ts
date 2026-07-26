@@ -15,6 +15,7 @@ import {
 } from 'three';
 import type { SurferState } from '../game/simulation/surfer';
 import { damp } from '../game/simulation/math';
+import { PEEL_DIRECTION } from '../game/simulation/waves';
 
 const CAMERA_DISTANCE = 7;
 const CAMERA_HEIGHT = 2.9;
@@ -72,18 +73,27 @@ export function createWorld(): World {
       lookHeading = dampAngle(lookHeading, state.heading, CAMERA_LOOK_YAW_DAMPING, dt);
     }
 
-    const cameraForward = new Vector3(Math.sin(cameraHeading), 0, -Math.cos(cameraHeading));
-    const lookForward = new Vector3(Math.sin(lookHeading), 0, -Math.cos(lookHeading));
+    // Inside the barrel the camera tucks low and close, and its trailing rail
+    // blends onto the tube axis (crest-parallel) so it stays inside the
+    // corridor of water instead of cutting through the wall or the lip.
+    const tuck = state.barrelDepth;
+    const tubeForward = new Vector3(PEEL_DIRECTION.x, 0, PEEL_DIRECTION.z);
+    const cameraForward = new Vector3(Math.sin(cameraHeading), 0, -Math.cos(cameraHeading))
+      .lerp(tubeForward, tuck * 0.85)
+      .normalize();
+    const lookForward = new Vector3(Math.sin(lookHeading), 0, -Math.cos(lookHeading))
+      .lerp(tubeForward, tuck * 0.6)
+      .normalize();
     const speedPush = Math.min(2, state.speed * 0.06);
-    const distance = CAMERA_DISTANCE + speedPush;
+    const distance = CAMERA_DISTANCE + speedPush - tuck * 4.1;
     const desiredPosition = board
       .clone()
       .addScaledVector(cameraForward, -distance)
-      .add(new Vector3(0, CAMERA_HEIGHT + state.airtime * 0.2, 0));
+      .add(new Vector3(0, state.airtime * 0.2 + CAMERA_HEIGHT - tuck * 2.35, 0));
     const desiredLook = board
       .clone()
       .addScaledVector(lookForward, CAMERA_LOOK_AHEAD + state.speed * 0.05)
-      .add(new Vector3(0, CAMERA_LOOK_HEIGHT, 0));
+      .add(new Vector3(0, CAMERA_LOOK_HEIGHT + tuck * 0.55, 0));
 
     if (!initialized) {
       camera.position.copy(desiredPosition);
