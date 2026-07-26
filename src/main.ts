@@ -26,7 +26,15 @@ import './styles.css';
 import { attachKeyboard, createInputState } from './game/input/inputState';
 import type { SurferState } from './game/simulation/surfer';
 import { createInitialSurferState, updateSurfer } from './game/simulation/surfer';
-import { sampleWave, sampleWaveSet } from './game/simulation/waves';
+import {
+  BREAKER_TRAVEL,
+  PEEL_DIRECTION,
+  getCrestZ,
+  getNearestCrestIndex,
+  getPocketWorldPosition,
+  sampleFoamField,
+  sampleWave,
+} from './game/simulation/waves';
 import { createOcean } from './render/ocean';
 import { createSurferModel, getSurferRenderHeading } from './render/surferModel';
 import { getBoardWaterContact } from './render/waterContact';
@@ -35,12 +43,21 @@ import { createHud } from './ui/hud';
 import { createTouchControls } from './ui/touchControls';
 import { isLocalhost } from './localAccess';
 
+type GameDebugControls = {
+  warp: (seconds: number) => void;
+  teleport: (x: number, z: number, heading?: number) => void;
+  getPocket: () => { x: number; z: number; waveIndex: number };
+  getTime: () => number;
+  sampleAt: (x: number, z: number) => ReturnType<typeof sampleWave>;
+};
+
 type GameInternals = {
   scene: Scene;
   camera: PerspectiveCamera | OrthographicCamera;
   renderer: WebGLRenderer;
   getSurferState: () => SurferState;
   getCameraPosition: () => Vector3;
+  debug?: GameDebugControls;
 };
 
 declare global {
@@ -95,6 +112,7 @@ const contactFoam = createBoardContactFoam();
 const wake = createBoardWake();
 const waterCues = createWaterMotionCues();
 const foamField = createLowPolyFoamField();
+const barrelSpit = createBarrelSpit();
 const input = createInputState();
 const hud = createHud();
 const touchControls = createTouchControls(input, renderer.domElement);
@@ -103,7 +121,16 @@ const clock = new Clock();
 let surferState = createInitialSurferState();
 let elapsed = 0;
 
-scene.add(ocean.mesh, foamField.root, contactFoam.root, wake.root, surfer.root, spray.root, waterCues.root);
+scene.add(
+  ocean.mesh,
+  foamField.root,
+  contactFoam.root,
+  wake.root,
+  surfer.root,
+  spray.root,
+  barrelSpit.root,
+  waterCues.root,
+);
 shell.append(hud.root, touchControls.root);
 if (poseEditorAvailable) {
   shell.append(createPoseEditorLink());
@@ -121,6 +148,7 @@ function tick(): void {
   const wave = sampleWave(surferState.position.x, surferState.position.z, elapsed);
   surferState = updateSurfer(surferState, input, wave, dt);
   const currentWave = sampleWave(surferState.position.x, surferState.position.z, elapsed);
+  const pocket = getPocketWorldPosition(elapsed, surferState.position.x, surferState.position.z);
 
   ocean.update(elapsed, surferState);
   foamField.update(surferState, elapsed);
@@ -128,9 +156,10 @@ function tick(): void {
   contactFoam.update(surferState, currentWave.lipPower, elapsed, dt);
   wake.update(surferState, currentWave.lipPower, elapsed, dt);
   spray.update(surferState, currentWave.lipPower, elapsed);
+  barrelSpit.update(surferState, elapsed, dt);
   waterCues.update(surferState, elapsed);
   updateCamera(surferState, dt);
-  hud.update(surferState);
+  hud.update(surferState, pocket);
   renderer.render(scene, camera);
 }
 
@@ -237,12 +266,12 @@ type LowPolyFoamField = {
 function createLowPolyFoamField(): LowPolyFoamField {
   const root = new Group();
   const columns = 42;
-  const crestBands = 6;
+  const crestBands = 4;
   const lanesPerBand = 3;
+  const laneOffsets = [-2.6, 0.4, 3.4];
   const rows = crestBands * lanesPerBand;
   const count = columns * rows;
   const spacingX = 4.8;
-  const primaryCrestPeriod = (Math.PI * 2) / 0.12;
   const geometry = new IcosahedronGeometry(1, 1);
   const material = new MeshStandardMaterial({
     color: new Color('#f1ffff'),
@@ -277,7 +306,7 @@ function createLowPolyFoamField(): LowPolyFoamField {
 
   function update(state: typeof surferState, time: number): void {
     const startX = Math.floor((state.position.x - columns * spacingX * 0.5) / spacingX) * spacingX;
-    const firstCrestIndex = Math.floor(((state.position.z - 82) * 0.12 + time * 1.35 - Math.PI / 2) / (Math.PI * 2));
+    const firstCrestIndex = getNearestCrestIndex(state.position.x, state.position.z - 60, time);
 
     flecks.forEach((fleck, index) => {
       const column = index % columns;
@@ -285,24 +314,21 @@ function createLowPolyFoamField(): LowPolyFoamField {
       const band = Math.floor(row / lanesPerBand);
       const lane = row % lanesPerBand;
       const crestIndex = firstCrestIndex + band;
-      const laneOffset = (lane - (lanesPerBand - 1) / 2) * 0.88;
       const x = startX + column * spacingX + fleck.offsetX;
-      const crestZ = (Math.PI / 2 - time * 1.35) / 0.12 + crestIndex * primaryCrestPeriod;
       const z =
-        crestZ +
-        laneOffset +
+        getCrestZ(crestIndex, x, time) +
+        laneOffsets[lane] +
         fleck.offsetZ +
-        Math.sin(x * 0.08 + time * 0.45 + fleck.seed * 0.03) * 0.72;
-      const foam = getWaveFoamSystem(x, z, time);
-      const wave = foam.wave;
+        Math.sin(x * 0.08 + time * 0.45 + fleck.seed * 0.03) * 0.9;
+      const foam = sampleFoamField(x, z, time);
       const distantWeight = smoothstep(0.02, 0.5, band / Math.max(1, crestBands - 1));
       const clump = Math.sin(x * 0.23 + z * 0.08 + fleck.seed * 0.31 + time * 0.08) * 0.5 + 0.5;
       const clusterWeight = 0.42 + smoothstep(0.18, 0.86, clump + fleck.cluster * 0.16) * 0.58;
-      const laneWeight = lane === 1 ? 1 : 0.58;
+      const laneWeight = lane === 1 ? 1 : 0.62;
       const size = fleck.scale * clusterWeight * laneWeight * foam.intensity * (0.62 + distantWeight * 0.8);
 
       if (size < 0.013) {
-        matrix.compose(position.set(x, wave.height, z), rotation, hiddenScale);
+        matrix.compose(position.set(x, foam.height, z), rotation, hiddenScale);
         mesh.setMatrixAt(index, matrix);
         return;
       }
@@ -310,7 +336,7 @@ function createLowPolyFoamField(): LowPolyFoamField {
       rotation.setFromAxisAngle(upAxis, foam.heading + (pseudo(fleck.seed + 12.4) - 0.5) * 0.5);
       position.set(
         x + Math.sin(time * 0.7 + fleck.seed) * 0.06,
-        wave.height + size * 0.64,
+        foam.height + size * 0.64,
         z + Math.cos(time * 0.55 + fleck.seed) * 0.06,
       );
       scale.setScalar(size * (0.92 + foam.crestStrength * 0.24));
@@ -493,36 +519,120 @@ function smoothstep(edge0: number, edge1: number, value: number): number {
   return t * t * (3 - 2 * t);
 }
 
-type WaveFoamSystem = {
-  wave: ReturnType<typeof sampleWave>;
-  intensity: number;
-  crestStrength: number;
-  heading: number;
+type BarrelSpit = {
+  root: Group;
+  update: (state: typeof surferState, time: number, dt: number) => void;
 };
 
-function getWaveFoamSystem(x: number, z: number, time: number): WaveFoamSystem {
-  const wave = sampleWave(x, z, time);
-  const waveSet = sampleWaveSet(x, z, time);
-  const primaryCrest = smoothstep(0.76, 0.99, Math.sin(z * 0.12 + time * 1.35));
-  const secondaryCrest = smoothstep(0.8, 0.98, Math.sin(z * 0.21 + x * 0.08 + time * 1.9)) * 0.72;
-  const barrelCrest = smoothstep(0.48, 0.95, Math.max(0, Math.sin(z * 0.075 - time * 0.85 + 1.5))) * 0.9;
-  const setCrest = waveSet.crestStrength * (0.7 + waveSet.intensity * 0.3);
-  const crestStrength = Math.min(1, Math.max(primaryCrest, secondaryCrest, barrelCrest, setCrest));
-  const breakingEnergy = Math.max(
-    smoothstep(0.62, 0.98, wave.lipPower) * 0.85,
-    smoothstep(0.48, 2.2, wave.height),
-    waveSet.intensity * 0.72,
-  );
-  const faceSupport = smoothstep(0.38, 0.78, wave.facePower);
-  const intensity = Math.min(1, crestStrength * breakingEnergy * (0.55 + faceSupport * 0.45));
-  const slopeZ = Math.abs(wave.slopeZ) < 0.001 ? 0.001 : wave.slopeZ;
+// Mist blowing out of the tube while the surfer is barreled, plus a burst of
+// spit when they make it back out onto the shoulder.
+function createBarrelSpit(): BarrelSpit {
+  const root = new Group();
+  const count = 60;
+  const material = new MeshStandardMaterial({
+    color: new Color('#e9fdff'),
+    roughness: 0.62,
+    flatShading: true,
+    transparent: true,
+    opacity: 0.5,
+    depthWrite: false,
+  });
+  const geometry = new IcosahedronGeometry(1, 1);
+  const mesh = new InstancedMesh(geometry, material, count);
+  mesh.instanceMatrix.setUsage(DynamicDrawUsage);
+  mesh.frustumCulled = false;
+  mesh.renderOrder = 5;
+  root.add(mesh);
 
-  return {
-    wave,
-    intensity,
-    crestStrength,
-    heading: Math.atan2(wave.slopeX, slopeZ),
-  };
+  const particles = Array.from({ length: count }, (_, index) => ({
+    born: -999,
+    lifetime: 1,
+    seed: index * 13.91 + 6.2,
+    originX: 0,
+    originY: 0,
+    originZ: 0,
+    velocityX: 0,
+    velocityY: 0,
+    velocityZ: 0,
+    size: 0.1,
+  }));
+  const matrix = new Matrix4();
+  const position = new Vector3();
+  const scale = new Vector3();
+  const rotation = new Quaternion();
+  const axis = new Vector3();
+  const hiddenScale = new Vector3(0.001, 0.001, 0.001);
+  let cursor = 0;
+  let emitCarry = 0;
+  let previousFlash = 0;
+
+  function spawn(state: typeof surferState, time: number, blast: number): void {
+    const particle = particles[cursor];
+    cursor = (cursor + 1) % particles.length;
+
+    const backIntoTube = 2.2 + pseudo(particle.seed + time) * 5.5;
+    const lateral = (pseudo(particle.seed + time * 1.7) - 0.5) * 2.4;
+    const originX =
+      state.position.x -
+      PEEL_DIRECTION.x * backIntoTube +
+      BREAKER_TRAVEL.x * (0.6 + lateral * 0.4);
+    const originZ =
+      state.position.z -
+      PEEL_DIRECTION.z * backIntoTube +
+      BREAKER_TRAVEL.z * (0.6 + lateral * 0.4);
+    const water = sampleWave(originX, originZ, time);
+    particle.born = time;
+    particle.lifetime = 0.45 + pseudo(particle.seed + 3.3) * 0.5;
+    particle.originX = originX;
+    particle.originY = water.height + 0.3 + pseudo(particle.seed + 8.8) * 0.9;
+    particle.originZ = originZ;
+    const speed = (9 + pseudo(particle.seed + 4.4) * 8) * (1 + blast * 0.5);
+    particle.velocityX = PEEL_DIRECTION.x * speed + BREAKER_TRAVEL.x * (1.5 + lateral);
+    particle.velocityY = 0.3 + pseudo(particle.seed + 5.5) * 0.9;
+    particle.velocityZ = PEEL_DIRECTION.z * speed + BREAKER_TRAVEL.z * (1.5 + lateral);
+    particle.size = (0.04 + pseudo(particle.seed + 6.6) * 0.1) * (1 + blast * 0.6);
+  }
+
+  function update(state: typeof surferState, time: number, dt: number): void {
+    const depth = state.barrelDepth;
+    emitCarry += (depth > 0.3 ? 10 + depth * 22 : 0) * dt;
+    const exitBurst = state.barrelFlash > previousFlash + 0.4;
+    previousFlash = state.barrelFlash;
+    if (exitBurst) {
+      emitCarry += 22;
+    }
+    while (emitCarry >= 1) {
+      spawn(state, time, exitBurst ? 1 : 0);
+      emitCarry -= 1;
+    }
+
+    for (let index = 0; index < particles.length; index += 1) {
+      const particle = particles[index];
+      const age = time - particle.born;
+      const life = age / particle.lifetime;
+      if (life >= 1 || life < 0) {
+        matrix.compose(position.set(0, -20, 0), rotation, hiddenScale);
+        mesh.setMatrixAt(index, matrix);
+        continue;
+      }
+
+      const drag = 1 - life * 0.55;
+      position.set(
+        particle.originX + particle.velocityX * age * drag + Math.sin(time * 9 + particle.seed) * 0.1,
+        particle.originY + particle.velocityY * age - 2.6 * age * age,
+        particle.originZ + particle.velocityZ * age * drag + Math.cos(time * 7.4 + particle.seed) * 0.1,
+      );
+      axis.set(Math.sin(particle.seed), 1, Math.cos(particle.seed * 1.3)).normalize();
+      rotation.setFromAxisAngle(axis, time * 2.4 + particle.seed);
+      scale.setScalar(particle.size * (1 - life * 0.6) * (0.7 + life * 0.9));
+      matrix.compose(position, rotation, scale);
+      mesh.setMatrixAt(index, matrix);
+    }
+
+    mesh.instanceMatrix.needsUpdate = true;
+  }
+
+  return { root, update };
 }
 
 function getBoardHalfWidthAt(localZ: number, boardHalfLength: number, boardHalfWidth: number): number {
@@ -829,6 +939,24 @@ if (poseEditorAvailable) {
     renderer,
     getSurferState: () => surferState,
     getCameraPosition: () => camera.position.clone(),
+    debug: {
+      warp: (seconds: number) => {
+        elapsed += seconds;
+      },
+      teleport: (x: number, z: number, heading?: number) => {
+        surferState = {
+          ...surferState,
+          position: { x, z },
+          heading: heading ?? surferState.heading,
+          height: sampleWave(x, z, elapsed).height,
+          verticalVelocity: 0,
+          airtime: 0,
+        };
+      },
+      getPocket: () => getPocketWorldPosition(elapsed, surferState.position.x, surferState.position.z),
+      getTime: () => elapsed,
+      sampleAt: (x: number, z: number) => sampleWave(x, z, elapsed),
+    },
   };
 } else {
   delete window.floripaSurfer;

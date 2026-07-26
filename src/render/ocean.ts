@@ -2,6 +2,7 @@ import {
   BufferAttribute,
   BufferGeometry,
   Color,
+  DoubleSide,
   Mesh,
   PlaneGeometry,
   ShaderMaterial,
@@ -11,7 +12,7 @@ import {
   Vector3,
 } from 'three';
 import type { SurferState } from '../game/simulation/surfer';
-import { sampleWave } from '../game/simulation/waves';
+import { sampleSurfaceInto, sampleWave, type SurfaceSample } from '../game/simulation/waves';
 
 export type OceanBoardState = Pick<
   SurferState,
@@ -54,16 +55,42 @@ const WAKE_STAMP_LIMIT = 34;
 const WAKE_STAMP_CULL_CROSS = 2.15;
 const WAKE_STAMP_CULL_LONGITUDINAL = 2.15;
 const OCEAN_NORMAL_UPDATE_INTERVAL = 2;
+const BOARD_DEFORM_RADIUS_SQ = 68;
+
+const scratchSurface: SurfaceSample = {
+  height: 0,
+  offsetX: 0,
+  offsetZ: 0,
+  curl: 0,
+  whitewater: 0,
+  foam: 0,
+  thin: 0,
+  cave: 0,
+  faceLight: 0,
+};
+
+type StampBounds = {
+  x: number;
+  z: number;
+  radiusSq: number;
+};
 
 export function createOcean(): Ocean {
-  const geometry = new PlaneGeometry(300, 250, 156, 128);
+  const geometry = new PlaneGeometry(290, 235, 164, 156);
   geometry.rotateX(-Math.PI / 2);
 
-  const colors = new Float32Array(geometry.attributes.position.count * 3);
+  const vertexCount = geometry.attributes.position.count;
+  const basePositions = new Float32Array(geometry.attributes.position.array);
+  const colors = new Float32Array(vertexCount * 3);
   geometry.setAttribute('color', new BufferAttribute(colors, 3));
+  const info = new Float32Array(vertexCount * 3);
+  geometry.setAttribute('info', new BufferAttribute(info, 3));
 
   const material = new ShaderMaterial({
     lights: true,
+    // The curling lip folds the sheet over itself, so the tube interior shows
+    // the underside of the surface.
+    side: DoubleSide,
     uniforms: UniformsUtils.merge([
       UniformsLib.lights,
       {
@@ -79,13 +106,16 @@ export function createOcean(): Ocean {
       #include <shadowmap_pars_vertex>
 
       attribute vec3 color;
+      attribute vec3 info;
 
       varying vec3 vColor;
+      varying vec3 vInfo;
       varying vec3 vNormal;
       varying vec3 vWorldPosition;
 
       void main() {
         vColor = color;
+        vInfo = info;
         vec3 transformedNormal = normal;
         vNormal = normalize(normalMatrix * transformedNormal);
         vec4 worldPosition = modelMatrix * vec4(position, 1.0);
@@ -113,6 +143,7 @@ export function createOcean(): Ocean {
       uniform vec3 uFoam;
 
       varying vec3 vColor;
+      varying vec3 vInfo;
       varying vec3 vNormal;
       varying vec3 vWorldPosition;
 
@@ -122,26 +153,57 @@ export function createOcean(): Ocean {
       }
 
       void main() {
-        vec3 normal = normalize(vNormal);
+        float interior = gl_FrontFacing ? 0.0 : 1.0;
+        vec3 normal = normalize(vNormal) * (gl_FrontFacing ? 1.0 : -1.0);
         vec3 viewDirection = normalize(cameraPosition - vWorldPosition);
         float fresnel = pow(1.0 - max(dot(normal, viewDirection), 0.0), 2.0);
         float sun = pow(max(dot(reflect(-uSunDirection, normal), viewDirection), 0.0), 26.0);
         float softSun = pow(max(dot(normal, uSunDirection), 0.0), 1.15);
         float facetLight = clamp(normal.y * 0.62 + normal.z * 0.16 + 0.42, 0.0, 1.0);
 
+        float foamAmount = vInfo.x;
+        float thin = vInfo.y;
+        // Underside of the folded sheet is always tube interior.
+        float cave = max(vInfo.z, interior * 0.85);
+
         vec2 p = vWorldPosition.xz;
         float longFoamLines =
           waveLine(p + vec2(0.0, uTime * 0.25), 0.17, 0.42, 0.035) * 0.34 +
           waveLine(p.yx + vec2(uTime * 0.18, 0.0), 0.24, -0.35, 0.03) * 0.2;
 
-        float crest = smoothstep(0.48, 0.92, vColor.b - max(vColor.r, vColor.g) * 0.22);
+        // Smooth boiling noise so whitewater and the lip edge churn without
+        // reading as a hard cell grid.
+        float boil = 0.5 + 0.5 * (
+          sin(p.x * 2.1 + p.y * 1.7 + uTime * 1.9) * 0.5 +
+          sin(p.x * 4.7 - p.y * 3.9 - uTime * 2.7 + 1.7) * 0.33 +
+          sin(p.x * 9.3 + p.y * 8.1 + uTime * 3.6) * 0.17
+        );
+        float foamDetail = smoothstep(0.22, 0.78, foamAmount * (0.62 + 0.38 * boil) + longFoamLines * foamAmount * 0.4);
+
         vec3 water = mix(uDeep, uFace, clamp(vColor.g * 1.18 + softSun * 0.16, 0.0, 1.0));
         water = mix(water, vColor, 0.7);
         water *= 0.76 + facetLight * 0.38;
-        water += vec3(0.08, 0.2, 0.22) * fresnel;
-        water += vec3(0.08, 0.14, 0.14) * longFoamLines;
-        water += vec3(1.0, 0.96, 0.78) * sun * 0.28;
-        water = mix(water, uFoam, clamp(crest * 0.64 + longFoamLines * crest * 0.38, 0.0, 0.86));
+        water += vec3(0.08, 0.2, 0.22) * fresnel * (1.0 - cave * 0.8);
+        water += vec3(0.08, 0.14, 0.14) * longFoamLines * (1.0 - cave);
+        water += vec3(1.0, 0.96, 0.78) * sun * 0.28 * (1.0 - cave * 0.7);
+
+        // Flow streaks climbing the steep part of the face keep the wall from
+        // reading as a flat sheet.
+        float steep = clamp(1.0 - normal.y, 0.0, 1.0);
+        float faceStreak = waveLine(vec2(p.x * 0.62 + p.y * 0.2, p.y * 0.3 + uTime * 0.4), 1.1, 1.3, 0.3);
+        water += vec3(0.045, 0.15, 0.16) * faceStreak * steep * (1.0 - cave * 0.6);
+
+        // Inside the tube: darker, greener, the sky reflection dies off, but
+        // sunlight filtering through the water keeps an emerald glow alive.
+        water = mix(water, water * vec3(0.42, 0.66, 0.72), cave * 0.8);
+        water += vec3(0.01, 0.16, 0.15) * interior * (0.4 + softSun * 0.6);
+
+        // The pitching lip is thin enough to glow with backlit sunlight, and
+        // seen from inside the tube the curtain keeps a softer glow.
+        float backlight = clamp(dot(viewDirection, -uSunDirection) * 0.5 + 0.5, 0.0, 1.0);
+        water += vec3(0.14, 0.78, 0.72) * thin * (0.35 + backlight * 0.65) * (0.55 - interior * 0.2);
+
+        water = mix(water, uFoam, clamp(foamDetail * 0.9 + foamAmount * 0.22, 0.0, 0.95));
 
         float castShadow = 1.0 - getShadowMask();
         water *= 1.0 - castShadow * 0.34;
@@ -166,10 +228,12 @@ export function createOcean(): Ocean {
   let wakeStampIndex = 0;
   let normalUpdateFrame = 0;
   const wakeStamps: WaterDeformationStamp[] = [];
+  const stampBounds: StampBounds[] = [];
 
   function update(time: number, board: OceanBoardState): void {
     const position = geometry.attributes.position;
     const color = geometry.attributes.color;
+    const infoAttribute = geometry.attributes.info;
     const dt = previousUpdateTime === null ? 1 / 60 : Math.min(1 / 15, Math.max(0, time - previousUpdateTime));
     previousUpdateTime = time;
     if (!initialized) {
@@ -198,38 +262,72 @@ export function createOcean(): Ocean {
       wakeEmitCarry -= 1;
     }
 
+    stampBounds.length = wakeStamps.length;
+    for (let i = 0; i < wakeStamps.length; i += 1) {
+      const stamp = wakeStamps[i];
+      const life = clamp(stamp.age / stamp.lifetime, 0, 1);
+      const width = stamp.width * (1 + life * 0.72);
+      const length = stamp.length * (1 + life * 1.15);
+      const radius = Math.max(width * WAKE_STAMP_CULL_CROSS, length * WAKE_STAMP_CULL_LONGITUDINAL);
+      stampBounds[i] = { x: stamp.x, z: stamp.z, radiusSq: radius * radius };
+    }
+
+    const boardX = board.position.x;
+    const boardZ = board.position.z;
+
     for (let i = 0; i < position.count; i += 1) {
-      const x = position.getX(i);
-      const z = position.getZ(i);
-      const worldX = x + visualCenterX;
-      const worldZ = z + visualCenterZ;
-      const wave = sampleWave(worldX, worldZ, time);
-      const liveDeformation = getBoardWaterDeformation(worldX, worldZ, wave.height, board);
-      const wakeDeformation = getTemporalWaterDeformation(worldX, worldZ, wakeStamps);
-      const heightOffset = liveDeformation.heightOffset + wakeDeformation.heightOffset;
-      const foamAmount = Math.min(1, liveDeformation.foam + wakeDeformation.foam);
-      position.setY(i, wave.height + heightOffset);
+      const baseX = basePositions[i * 3];
+      const baseZ = basePositions[i * 3 + 2];
+      const worldX = baseX + visualCenterX;
+      const worldZ = baseZ + visualCenterZ;
+      const surf = sampleSurfaceInto(scratchSurface, worldX, worldZ, time);
+
+      let heightOffset = 0;
+      let contactFoam = 0;
+      const dxBoard = worldX - boardX;
+      const dzBoard = worldZ - boardZ;
+      if (dxBoard * dxBoard + dzBoard * dzBoard < BOARD_DEFORM_RADIUS_SQ) {
+        const liveDeformation = getBoardWaterDeformation(worldX, worldZ, surf.height, board);
+        heightOffset += liveDeformation.heightOffset;
+        contactFoam += liveDeformation.foam;
+      }
+      for (let stampIndex = 0; stampIndex < wakeStamps.length; stampIndex += 1) {
+        const bounds = stampBounds[stampIndex];
+        const dxStamp = worldX - bounds.x;
+        const dzStamp = worldZ - bounds.z;
+        if (dxStamp * dxStamp + dzStamp * dzStamp > bounds.radiusSq) {
+          continue;
+        }
+        const wakeDeformation = getWakeStampDeformation(worldX, worldZ, wakeStamps[stampIndex]);
+        heightOffset += wakeDeformation.heightOffset;
+        contactFoam += wakeDeformation.foam;
+      }
+
+      const foamTotal = Math.min(1, surf.foam + contactFoam);
+      position.setXYZ(i, baseX + surf.offsetX, surf.height + heightOffset, baseZ + surf.offsetZ);
 
       const broadShade = Math.sin(worldX * 0.035 + worldZ * 0.048 + time * 0.025) * 0.5 + 0.5;
-      const crossShade = Math.sin(worldX * 0.09 - worldZ * 0.025 + time * 0.045) * 0.5 + 0.5;
-      const longBand = Math.sin(worldX * 0.07 + worldZ * 0.11 + time * 0.22) * 0.5 + 0.5;
-      const colorMix = Math.min(1, wave.facePower * 0.78 + Math.max(0, wave.height) * 0.06 + broadShade * 0.08);
-      const highlight = Math.min(1, wave.lipPower * 0.42 + Math.pow(longBand, 5) * wave.facePower * 0.24);
+      const colorMix = Math.min(
+        1,
+        surf.faceLight * 0.9 + Math.max(0, surf.height) * 0.24 + broadShade * 0.1,
+      );
       const boardShadow = Math.min(0.45, Math.max(0, -heightOffset) * 2.4);
       const boardLip = Math.min(0.38, Math.max(0, heightOffset) * 2.6);
-      tint.copy(deep).lerp(face, colorMix).lerp(brightFace, crossShade * 0.08);
+      tint.copy(deep).lerp(face, colorMix);
+      tint.lerp(brightFace, surf.curl * 0.24 + surf.faceLight * (0.14 + broadShade * 0.16));
       if (broadShade < 0.2) {
         tint.lerp(shadow, 0.08);
       }
-      tint.lerp(shadow, boardShadow);
+      tint.lerp(shadow, boardShadow + surf.cave * 0.3);
       tint.lerp(brightFace, boardLip);
-      tint.lerp(foam, foamAmount * 0.36);
-      tint.lerp(foam, highlight);
+      tint.lerp(foam, foamTotal * 0.34);
       color.setXYZ(i, tint.r, tint.g, tint.b);
+      infoAttribute.setXYZ(i, foamTotal, surf.thin, surf.cave);
     }
 
     position.needsUpdate = true;
     color.needsUpdate = true;
+    infoAttribute.needsUpdate = true;
     if (normalUpdateFrame % OCEAN_NORMAL_UPDATE_INTERVAL === 0) {
       geometry.computeVertexNormals();
     }

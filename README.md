@@ -2,11 +2,15 @@
 
 A low-poly browser surf game built with Vite, TypeScript, and Three.js.
 
-Floripa Surfer is an arcade surf prototype focused on water feel: moving swell sets to chase, board-water deformation, tail-heavy board contouring, geodesic foam, wake bubbles, and a local-only pose editor for tuning the rider.
+Floripa Surfer is an arcade surf prototype focused on water feel: breaking wave sets with peeling barrels you can ride inside, board-water deformation, tail-heavy board contouring, geodesic foam, wake bubbles, and a local-only pose editor for tuning the rider.
 
 ## Features
 
-- Moving wave-set strips that travel through the world and affect physics, foam, and rendering.
+- Breaking wave sets that travel shoreward with a peeling pocket: green shoulder ahead of the peel, a curling lip and open barrel at the pocket, collapse and rolling whitewater behind it.
+- Rideable barrels: drop in, tuck under the folded lip, and race the peel down the line. A HUD timer tracks tube time, the camera pulls in low for the view through the tube, and making it out fires spit and a score flash.
+- Wave-aware physics: gravity slides the board down the face, the pocket carries it down the line, whitewater drags, shoves, and cuts steering authority.
+- Curling lip geometry: the ocean sheet folds forward over the face, with tube-interior shading, a backlit thin-lip glow, and lip-edge foam.
+- A pocket arrow that points at the next makeable barrel section.
 - Board contouring from nose, tail, rail, and center water probes.
 - Main-ocean deformation plus fading tail wake stamps, so water returns to the procedural wave over time.
 - Low-poly ocean, horizon terrain, foam fields, spray, and contact bubbles.
@@ -34,6 +38,10 @@ Open the local URL printed by Vite. The dev script binds to `127.0.0.1` so the p
 - `Space`: jump.
 - Arrow keys: trick direction inputs.
 - Touch: drag on the canvas to steer/pump, tap for the jump action.
+
+### Getting barreled
+
+Follow the pocket arrow to the peeling section, point at the beach to drop in over the crest, then angle left down the line and tuck under the lip. Stay ahead of the collapse — too slow and the whitewater swallows you, too fast and you race out onto the shoulder. The waves peel left, so hold a line slightly into the face to sit deeper in the tube.
 
 ## Local Pose Editor
 
