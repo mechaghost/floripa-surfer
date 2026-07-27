@@ -72,6 +72,8 @@ npm run build
 
 The current build is small enough for Hataw quick publish, but any static host can serve the `dist/` folder.
 
+Releases are also published to the `gh-pages` branch as a relative-base build (`vite build --base=./`), so the game can be served from a subpath. To host it on GitHub Pages, enable Pages for the `gh-pages` branch in the repository settings; runtime asset URLs are base-aware, so models load correctly under either a root or subpath deployment.
+
 ## Project Layout
 
 - [src/game](./src/game): input and simulation.
