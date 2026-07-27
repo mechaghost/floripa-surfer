@@ -350,6 +350,47 @@ describe('barrel riding', () => {
     expect(next.position.x).toBeLessThan(still.position.x);
   });
 
+  it('tracks pump effort and churn as smoothed animation drivers', () => {
+    let state = createInitialSurferState();
+    const input = createInputState();
+    input.forward = 1;
+    const foamWave = makeWave({ whitewater: 0.9, facePower: 0.4 });
+
+    for (let frame = 0; frame < 30; frame += 1) {
+      state = updateSurfer(state, input, foamWave, 1 / 30);
+    }
+
+    expect(state.pumpEffort).toBeGreaterThan(0.8);
+    expect(state.churn).toBeGreaterThan(0.6);
+
+    const idle = createInputState();
+    for (let frame = 0; frame < 30; frame += 1) {
+      state = updateSurfer(state, idle, makeWave({ facePower: 0.4 }), 1 / 30);
+    }
+
+    expect(state.pumpEffort).toBeLessThan(0.2);
+    expect(state.churn).toBeLessThan(0.3);
+  });
+
+  it('pulses a decaying land impact after touching down from a jump', () => {
+    let state = createInitialSurferState();
+    const input = createInputState();
+    input.trick = true;
+    const flatWave = makeWave({ lipPower: 0.6, facePower: 0.4 });
+
+    state = updateSurfer(state, input, flatWave, 1 / 30);
+    input.trick = false;
+    let peakImpact = 0;
+    for (let frame = 0; frame < 140; frame += 1) {
+      state = updateSurfer(state, input, flatWave, 1 / 30);
+      peakImpact = Math.max(peakImpact, state.landImpact);
+    }
+
+    expect(peakImpact).toBeGreaterThan(0.1);
+    expect(state.height).toBe(flatWave.height);
+    expect(state.landImpact).toBeLessThan(peakImpact);
+  });
+
   it('drags and shoves the surfer when caught by whitewater', () => {
     let churned = createInitialSurferState();
     let clean = createInitialSurferState();
@@ -507,6 +548,40 @@ describe('surfer pose targets', () => {
 
     expect(targets.find((target) => target.name === 'default')?.weight).toBeLessThan(0.3);
     expect(targets.find((target) => target.name === 'right-lean')?.weight).toBeGreaterThan(0.95);
+  });
+
+  it('tucks into the barrel pose while deep in the tube', () => {
+    const state = createInitialSurferState();
+    state.barrelDepth = 0.85;
+
+    const targets = getSurferPoseTargets(state, 1);
+
+    expect(targets.find((target) => target.name === 'barrel-tuck')?.weight).toBeGreaterThan(0.9);
+    expect(targets.find((target) => target.name === 'default')?.weight).toBeLessThan(0.3);
+  });
+
+  it('braces through whitewater, hard falls, and landings', () => {
+    const churned = createInitialSurferState();
+    churned.churn = 1;
+    const falling = createInitialSurferState();
+    falling.airtime = 0.2;
+    falling.verticalVelocity = -6;
+    const landed = createInitialSurferState();
+    landed.landImpact = 0.8;
+
+    expect(getSurferPoseTargets(churned, 1).find((target) => target.name === 'brace')?.weight).toBeGreaterThan(0.8);
+    expect(getSurferPoseTargets(falling, 1).find((target) => target.name === 'brace')?.weight).toBeGreaterThan(0.4);
+    expect(getSurferPoseTargets(landed, 1).find((target) => target.name === 'brace')?.weight).toBeGreaterThan(0.7);
+  });
+
+  it('streamlines into a speed crouch when flying and pumping', () => {
+    const state = createInitialSurferState();
+    state.speed = 20;
+    state.pumpEffort = 1;
+
+    const targets = getSurferPoseTargets(state, 1);
+
+    expect(targets.find((target) => target.name === 'speed-crouch')?.weight).toBeGreaterThan(0.5);
   });
 
   it('maps jump startup and airtime to separate pose states', () => {

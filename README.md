@@ -11,6 +11,7 @@ Floripa Surfer is an arcade surf prototype focused on water feel: breaking wave 
 - Wave-aware physics: gravity slides the board down the face, the pocket carries it down the line, whitewater drags, shoves, and cuts steering authority.
 - Curling lip geometry: the ocean sheet folds forward over the face, with tube-interior shading, a backlit thin-lip glow, and lip-edge foam.
 - A pocket arrow that points at the next makeable barrel section.
+- Sim-driven rider animation: barrel tuck, speed crouch, whitewater brace, jump and air poses, landing-impact reactions, and a procedural secondary-motion layer, all authored through the pose-editor library.
 - Board contouring from nose, tail, rail, and center water probes.
 - Main-ocean deformation plus fading tail wake stamps, so water returns to the procedural wave over time.
 - Low-poly ocean, horizon terrain, foam fields, spray, and contact bubbles.

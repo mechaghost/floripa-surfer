@@ -981,6 +981,9 @@ function createSurferVerificationView(shell: HTMLElement, renderer: WebGLRendere
   fillLight.position.set(-4, 3, -5);
   scene.add(fillLight);
   const surfer = createSurferModel();
+  // Pin a single named pose for inspection, e.g. ?view=surfer-test&pose=barrel-tuck
+  const posePin = new URLSearchParams(window.location.search).get('pose');
+  surfer.setPoseOverride(posePin ?? 'default');
   const state = createInitialSurferState();
   state.position = { x: 0, z: 0 };
   state.height = 0;
@@ -988,6 +991,10 @@ function createSurferVerificationView(shell: HTMLElement, renderer: WebGLRendere
   state.pitch = 0;
   state.bank = 0;
   state.speed = 0;
+  // Keep the stage flat: marking the rig airborne zeroes the water-probe
+  // influence so passing waves cannot hoist or rock the model.
+  state.airtime = 999;
+  const verifyClock = new Clock();
 
   scene.add(surfer.root);
   scene.add(createVerificationDeck());
@@ -1001,7 +1008,7 @@ function createSurferVerificationView(shell: HTMLElement, renderer: WebGLRendere
   renderer.setAnimationLoop(render);
 
   function render(): void {
-    surfer.update(state, 0);
+    surfer.update(state, verifyClock.getElapsedTime());
     renderer.setScissorTest(true);
 
     const width = renderer.domElement.clientWidth;
