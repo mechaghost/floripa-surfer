@@ -1,7 +1,8 @@
 import { Euler, Quaternion, Vector3, type Object3D } from 'three';
 import bundledPoseLibraryJson from '../data/defaultPoseLibrary.json';
 
-export const RIDER_ASSET_URL = '/assets/models/woman-tank-top-quaternius.glb';
+// Base-aware so release builds work when hosted under a subpath.
+export const RIDER_ASSET_URL = `${import.meta.env.BASE_URL}assets/models/woman-tank-top-quaternius.glb`;
 export const POSE_STORAGE_KEY = 'floripa-surfer-pose-editor';
 export const DEFAULT_POSE_STATE = 'default';
 export const IDLE_POSE_STATES = ['idle-1', 'idle-2', 'idle-3', 'idle-4'] as const;
