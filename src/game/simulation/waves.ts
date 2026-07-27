@@ -49,7 +49,9 @@ export type PocketPosition = {
 const DIR_X = 0.1;
 const DIR_Z = Math.sqrt(1 - DIR_X * DIR_X);
 const SPEED = 7.2;
-const PERIOD = 95;
+// Distance between breaker crests: long enough for a real lull between waves
+// (one wave arrives roughly every 25 seconds) instead of a constant wall.
+const PERIOD = 180;
 const PHASE = 8;
 const AMPLITUDE = 5.2;
 const FACE_LENGTH = 8.2;
@@ -148,8 +150,8 @@ function pocketU(waveIndex: number, time: number): number {
 function ambientHeight(x: number, z: number, time: number): number {
   return (
     0.38 * Math.sin(z * 0.085 + time * 0.85) +
-    0.2 * Math.sin(z * 0.16 + x * 0.07 + time * 1.3) +
-    0.12 * Math.sin(x * 0.2 - time * 1.05)
+    0.15 * Math.sin(z * 0.14 + x * 0.06 + time * 1.2) +
+    0.09 * Math.sin(x * 0.2 - time * 1.05)
   );
 }
 
