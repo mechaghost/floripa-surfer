@@ -1,6 +1,6 @@
 {
   "name": "floripa-surfer",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A low-poly browser surf game with moving wave sets, board-water deformation, and arcade carving.",
   "private": true,
   "type": "module",
