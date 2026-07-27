@@ -500,7 +500,7 @@ function wrapPositive(value: number, length: number): number {
 async function loadRidingAssets(assetRig: Group, fallback: Group): Promise<RiderPoseController | null> {
   const loader = new GLTFLoader();
   const [boardGltf, riderGltf] = await Promise.all([
-    loader.loadAsync('/assets/models/surfboard-jeremy.glb'),
+    loader.loadAsync(`${import.meta.env.BASE_URL}assets/models/surfboard-jeremy.glb`),
     loader.loadAsync(RIDER_ASSET_URL),
   ]);
 
