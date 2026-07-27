@@ -1,15 +1,27 @@
 {
   "name": "floripa-surfer",
-  "version": "0.1.0",
+  "version": "0.2.0",
+  "description": "A low-poly browser surf game with moving wave sets, board-water deformation, and arcade carving.",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc && vite build",
     "test": "vitest run",
+    "check": "npm test && npm run build",
     "preview": "vite preview --host 127.0.0.1",
     "start": "serve -s dist -l tcp://0.0.0.0:${PORT:-3000}"
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mechaghost/floripa-surfer.git"
+  },
+  "keywords": [
+    "surfing",
+    "threejs",
+    "vite",
+    "game"
+  ],
   "dependencies": {
     "@mediapipe/tasks-vision": "^0.10.35",
     "serve": "^14.2.6",

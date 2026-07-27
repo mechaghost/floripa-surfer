@@ -32,17 +32,25 @@ import {
 const BOARD_DECK_TOP_PERCENTILE = 0.92;
 const BOARD_HULL_BOTTOM_PERCENTILE = 0.15;
 const BOARD_HULL_CLEARANCE = 0.02;
-const BOARD_SURFACE_LENGTH = 2.9;
-const BOARD_SURFACE_WIDTH = 0.82;
+const BOARD_SURFACE_LENGTH = 3.35;
+const BOARD_SURFACE_WIDTH = 1.04;
+const BOARD_TAIL_LOAD_BASE = 0.045;
+const BOARD_TAIL_LOAD_SPEED = 0.05;
 const BOARD_FIN_PROTRUSION_SCALE = 0.32;
-const MAX_VISUAL_PITCH = 0.42;
-const MAX_VISUAL_BANK = 0.82;
+const BOARD_DEPTH_OFFSET_FACTOR = -1.25;
+const BOARD_DEPTH_OFFSET_UNITS = -4;
+const BOARD_RENDER_ORDER = 8;
+const MAX_WATER_PITCH = 0.3;
+const MAX_WATER_BANK = 0.24;
+const MAX_VISUAL_PITCH = 0.48;
+const MAX_VISUAL_BANK = 0.86;
 const FOOT_DECK_CLEARANCE = 0.018;
 const SURFER_VISUAL_HEIGHT_OFFSET = 0.2;
 
 export type SurferModel = {
   root: Group;
   update: (state: SurferState, time: number) => void;
+  setPoseOverride: (name: string | null) => void;
 };
 
 type RiderPoseTarget = {
@@ -58,8 +66,33 @@ type PreparedRider = {
 
 type RiderPoseController = {
   poseRoot: Object3D;
+  livingRoot: Object3D;
   poses: Map<string, SavedPose>;
   weights: Map<string, number>;
+};
+
+// Attack/release rates per pose family: reactions (brace, jump start, tuck)
+// snap in and ease out; ambient states drift.
+const POSE_BLEND_RATES: Record<string, { attack: number; release: number }> = {
+  'barrel-tuck': { attack: 13, release: 6 },
+  brace: { attack: 15, release: 7 },
+  'speed-crouch': { attack: 6, release: 4.5 },
+  'start-jump': { attack: 16, release: 10 },
+  'air-jump': { attack: 10, release: 7 },
+  'left-lean': { attack: 8.5, release: 6 },
+  'right-lean': { attack: 8.5, release: 6 },
+};
+const DEFAULT_POSE_BLEND_RATE = { attack: 5.5, release: 4.5 };
+
+function getPoseBlendRate(name: string): { attack: number; release: number } {
+  return POSE_BLEND_RATES[name] ?? DEFAULT_POSE_BLEND_RATE;
+}
+
+export type BoardWaterProbePose = {
+  height: number;
+  pitch: number;
+  bank: number;
+  contact: number;
 };
 
 export function getSurferRenderHeading(simHeading: number): number {
@@ -86,8 +119,22 @@ export function getSurferPoseTargets(state: SurferState, time: number): RiderPos
   const airJump = jumpProgress === null
     ? (isAirborne ? clamp(0.35 + Math.abs(state.verticalVelocity) * 0.12, 0, 0.92) : 0)
     : Math.max(isAirborne ? 0.42 : 0, smoothstep(0.2, 0.58, jumpProgress));
-  const idleStrength = (1 - leanStrength) * (isAirborne ? 0 : 0.35);
-  const primaryPoseStrength = Math.max(leanStrength, startJump, airJump);
+
+  // Situation-driven full-body states layered over the basics: tucking through
+  // the tube, streamlining at speed, and bracing through chop and landings.
+  const tuck = smoothstep(0.22, 0.72, state.barrelDepth) * (isAirborne ? 0 : 1);
+  const dropFall = isAirborne && state.verticalVelocity < -2.6
+    ? clamp((-state.verticalVelocity - 2.6) / 5, 0, 1) * 0.9
+    : 0;
+  const brace = Math.max(smoothstep(0.25, 0.8, state.churn) * (isAirborne ? 0.4 : 1), state.landImpact, dropFall);
+  const speedCrouch =
+    (clamp((state.speed - 12.5) / 8, 0, 1) * 0.55 + state.pumpEffort * 0.5) *
+    (isAirborne ? 0 : 1) *
+    (1 - tuck) *
+    (1 - brace);
+
+  const idleStrength = (1 - leanStrength) * (isAirborne ? 0 : 0.35) * (1 - tuck) * (1 - brace) * (1 - speedCrouch * 0.7);
+  const primaryPoseStrength = Math.max(leanStrength, startJump, airJump, tuck, brace, speedCrouch * 0.8);
   const defaultWeight = clamp(1 - primaryPoseStrength * 0.85, 0.15, 1);
   const targets: RiderPoseTarget[] = [{ name: DEFAULT_POSE_STATE, weight: defaultWeight }];
 
@@ -100,17 +147,27 @@ export function getSurferPoseTargets(state: SurferState, time: number): RiderPos
     targets.push({ name: IDLE_POSE_STATES[nextIdleIndex], weight: idleStrength * blend });
   }
 
+  const leanScale = 1.05 * (1 - tuck * 0.55) * (1 - brace * 0.5);
   if (leanLeft > 0.001) {
-    targets.push({ name: 'left-lean', weight: leanLeft * 1.05 });
+    targets.push({ name: 'left-lean', weight: leanLeft * leanScale });
   }
   if (leanRight > 0.001) {
-    targets.push({ name: 'right-lean', weight: leanRight * 1.05 });
+    targets.push({ name: 'right-lean', weight: leanRight * leanScale });
   }
   if (startJump > 0.001) {
     targets.push({ name: 'start-jump', weight: startJump * 1.15 });
   }
   if (airJump > 0.001) {
     targets.push({ name: 'air-jump', weight: airJump });
+  }
+  if (tuck > 0.001) {
+    targets.push({ name: 'barrel-tuck', weight: tuck * 1.35 });
+  }
+  if (speedCrouch > 0.001) {
+    targets.push({ name: 'speed-crouch', weight: speedCrouch * 0.9 });
+  }
+  if (brace > 0.001) {
+    targets.push({ name: 'brace', weight: brace * 1.25 });
   }
 
   return targets;
@@ -123,8 +180,10 @@ export function createSurferModel(): SurferModel {
   const assetRig = new Group();
   let visualPitch = 0;
   let visualBank = 0;
+  let visualHeight: number | null = null;
   let previousUpdateTime: number | null = null;
   let riderPoseController: RiderPoseController | null = null;
+  let poseOverride: string | null = null;
   root.add(trickPivot);
   trickPivot.add(fallback, assetRig);
   assetRig.visible = false;
@@ -135,6 +194,8 @@ export function createSurferModel(): SurferModel {
     metalness: 0.05,
   });
   const railMaterial = new MeshStandardMaterial({ color: '#fe5f55', roughness: 0.45 });
+  applyBoardDepthBias(boardMaterial);
+  applyBoardDepthBias(railMaterial);
   const skinMaterial = new MeshStandardMaterial({ color: '#b86f4f', roughness: 0.55 });
   const suitMaterial = new MeshStandardMaterial({ color: '#14213d', roughness: 0.5 });
 
@@ -142,11 +203,13 @@ export function createSurferModel(): SurferModel {
   board.rotation.x = Math.PI / 2;
   board.scale.set(0.78, 0.16, 1);
   board.castShadow = true;
+  board.renderOrder = BOARD_RENDER_ORDER;
   fallback.add(board);
 
   const stripe = new Mesh(new BoxGeometry(0.08, 0.06, 2.45), railMaterial);
   stripe.position.y = 0.11;
   stripe.castShadow = true;
+  stripe.renderOrder = BOARD_RENDER_ORDER + 1;
   fallback.add(stripe);
 
   const torso = new Mesh(new CapsuleGeometry(0.28, 0.55, 6, 12), suitMaterial);
@@ -176,13 +239,29 @@ export function createSurferModel(): SurferModel {
     previousUpdateTime = time;
 
     const renderBank = getSurferRenderBank(state.bank);
-    const trim = getOrganicBoardTrim(state, time);
-    const targetPitch = clamp(state.pitch * 0.45 + trim.pitch, -MAX_VISUAL_PITCH, MAX_VISUAL_PITCH);
-    const targetBank = clamp(renderBank + trim.bank, -MAX_VISUAL_BANK, MAX_VISUAL_BANK);
-    visualPitch = dampValue(visualPitch, targetPitch, 7.5, dt);
-    visualBank = dampValue(visualBank, targetBank, 7.5, dt);
+    const probePose = getBoardWaterProbePose(state, time);
+    const trim = getOrganicBoardTrimFromProbe(state, time, probePose);
+    const waterInfluence = probePose.contact;
+    const targetPitch = clamp(
+      state.pitch * (0.22 + (1 - waterInfluence) * 0.28) + trim.pitch,
+      -MAX_VISUAL_PITCH,
+      MAX_VISUAL_PITCH,
+    );
+    const targetBank = clamp(
+      renderBank * (0.58 + (1 - waterInfluence) * 0.42) + trim.bank,
+      -MAX_VISUAL_BANK,
+      MAX_VISUAL_BANK,
+    );
+    visualPitch = dampValue(visualPitch, targetPitch, 10.5, dt);
+    visualBank = dampValue(visualBank, targetBank, 10.5, dt);
 
-    root.position.set(state.position.x, getSurferVisualHeight(state.height), state.position.z);
+    const targetWaterHeight = state.height * (1 - waterInfluence) + probePose.height * waterInfluence;
+    const targetVisualHeight = getSurferVisualHeight(targetWaterHeight);
+    visualHeight = visualHeight === null
+      ? targetVisualHeight
+      : dampValue(visualHeight, targetVisualHeight, waterInfluence > 0.2 ? 13 : 6, dt);
+
+    root.position.set(state.position.x, visualHeight, state.position.z);
     root.rotation.set(visualPitch, getSurferRenderHeading(state.heading), visualBank);
 
     const bounce = Math.sin(time * 10 + state.speed) * 0.025;
@@ -190,7 +269,8 @@ export function createSurferModel(): SurferModel {
     leftArm.rotation.z = 0.7 + visualBank * 0.8;
     rightArm.rotation.z = -0.7 + visualBank * 0.8;
     if (riderPoseController) {
-      updateRiderPose(riderPoseController, state, time, dt);
+      updateRiderPose(riderPoseController, state, time, dt, poseOverride);
+      applyLivingMotion(riderPoseController.livingRoot, state, time);
     }
 
     if (state.activeTrick) {
@@ -203,42 +283,95 @@ export function createSurferModel(): SurferModel {
     }
   }
 
-  return { root, update };
+  return {
+    root,
+    update,
+    setPoseOverride: (name: string | null) => {
+      poseOverride = name;
+    },
+  };
+}
+
+// Procedural secondary motion layered over the blended pose: a speed-scaled
+// bounce, a carve-synced sway, a tight shiver in the tube, and churn shake in
+// whitewater. Applied to the rider wrapper so authored poses stay untouched.
+function applyLivingMotion(livingRoot: Object3D, state: SurferState, time: number): void {
+  const airborne = state.airtime > 0 || Math.abs(state.verticalVelocity) > 0.02;
+  const grounded = airborne ? 0 : 1;
+  const speedFactor = clamp((state.speed - 4.5) / 12, 0, 1);
+
+  const bob =
+    Math.sin(time * (4.1 + state.speed * 0.2)) * (0.008 + speedFactor * 0.016) * grounded +
+    Math.sin(time * 5.6) * state.pumpEffort * 0.02 * grounded -
+    state.landImpact * 0.05;
+  const shiver = Math.sin(time * 11.3) * 0.006 * state.barrelDepth;
+  const churnShake = Math.sin(time * 13.7) * 0.014 * state.churn * grounded;
+
+  livingRoot.position.y = bob + shiver;
+  livingRoot.rotation.z =
+    Math.sin(time * 2.6 + 1.3) * 0.02 * speedFactor * grounded + churnShake;
+  livingRoot.rotation.x =
+    Math.sin(time * 3.4 + 0.6) * 0.014 * speedFactor * grounded +
+    state.pumpEffort * Math.sin(time * 5.6 + 0.8) * 0.022 * grounded;
+  livingRoot.rotation.y = Math.sin(time * 1.9) * 0.012 * speedFactor;
 }
 
 export function getOrganicBoardTrim(state: SurferState, time: number): { pitch: number; bank: number } {
+  return getOrganicBoardTrimFromProbe(state, time, getBoardWaterProbePose(state, time));
+}
+
+export function getBoardWaterProbePose(state: SurferState, time: number): BoardWaterProbePose {
   const forwardX = Math.sin(state.heading);
   const forwardZ = -Math.cos(state.heading);
   const rightX = Math.cos(state.heading);
   const rightZ = Math.sin(state.heading);
   const halfLength = BOARD_SURFACE_LENGTH * 0.5;
   const halfWidth = BOARD_SURFACE_WIDTH * 0.5;
+  const nose = sampleBoardWaterProbe(state, time, 0, halfLength, forwardX, forwardZ, rightX, rightZ);
+  const noseLeft = sampleBoardWaterProbe(state, time, -halfWidth * 0.58, halfLength * 0.72, forwardX, forwardZ, rightX, rightZ);
+  const noseRight = sampleBoardWaterProbe(state, time, halfWidth * 0.58, halfLength * 0.72, forwardX, forwardZ, rightX, rightZ);
+  const tail = sampleBoardWaterProbe(state, time, 0, -halfLength, forwardX, forwardZ, rightX, rightZ);
+  const tailLeft = sampleBoardWaterProbe(state, time, -halfWidth * 0.62, -halfLength * 0.68, forwardX, forwardZ, rightX, rightZ);
+  const tailRight = sampleBoardWaterProbe(state, time, halfWidth * 0.62, -halfLength * 0.68, forwardX, forwardZ, rightX, rightZ);
+  const leftRail = sampleBoardWaterProbe(state, time, -halfWidth, -halfLength * 0.08, forwardX, forwardZ, rightX, rightZ);
+  const rightRail = sampleBoardWaterProbe(state, time, halfWidth, -halfLength * 0.08, forwardX, forwardZ, rightX, rightZ);
+  const center = sampleBoardWaterProbe(state, time, 0, 0, forwardX, forwardZ, rightX, rightZ);
+  const frontHeight = (nose.height * 1.6 + noseLeft.height + noseRight.height) / 3.6;
+  const backHeight = (tail.height * 1.6 + tailLeft.height + tailRight.height) / 3.6;
+  const leftHeight = (leftRail.height * 1.4 + noseLeft.height * 0.45 + tailLeft.height * 0.65) / 2.5;
+  const rightHeight = (rightRail.height * 1.4 + noseRight.height * 0.45 + tailRight.height * 0.65) / 2.5;
+  const tailLoad = BOARD_TAIL_LOAD_BASE + clamp((state.speed - 4) / 14, 0, 1) * BOARD_TAIL_LOAD_SPEED;
+  const loadedBackHeight = backHeight - tailLoad;
+  const loadedLeftHeight = leftHeight - tailLoad * 0.28;
+  const loadedRightHeight = rightHeight - tailLoad * 0.28;
+  const supportHeight =
+    center.height * 0.22 +
+    frontHeight * 0.16 +
+    loadedBackHeight * 0.4 +
+    loadedLeftHeight * 0.11 +
+    loadedRightHeight * 0.11;
+  const clearance = state.height - supportHeight;
+  const contact = state.airtime > 0 || Math.abs(state.verticalVelocity) > 0.08
+    ? 0
+    : clamp((0.34 - clearance) / 0.34, 0, 1);
+  const pitch = clamp(Math.atan2(frontHeight - loadedBackHeight, BOARD_SURFACE_LENGTH) * 1.28, -MAX_WATER_PITCH, MAX_WATER_PITCH);
+  const bank = clamp(Math.atan2(loadedRightHeight - loadedLeftHeight, BOARD_SURFACE_WIDTH) * 0.88, -MAX_WATER_BANK, MAX_WATER_BANK);
 
-  const nose = sampleWave(
-    state.position.x + forwardX * halfLength,
-    state.position.z + forwardZ * halfLength,
-    time,
-  );
-  const tail = sampleWave(
-    state.position.x - forwardX * halfLength,
-    state.position.z - forwardZ * halfLength,
-    time,
-  );
-  const rightRail = sampleWave(
-    state.position.x + rightX * halfWidth,
-    state.position.z + rightZ * halfWidth,
-    time,
-  );
-  const leftRail = sampleWave(
-    state.position.x - rightX * halfWidth,
-    state.position.z - rightZ * halfWidth,
-    time,
-  );
+  return {
+    height: supportHeight,
+    pitch,
+    bank,
+    contact,
+  };
+}
 
+function getOrganicBoardTrimFromProbe(
+  state: SurferState,
+  time: number,
+  probePose: BoardWaterProbePose,
+): { pitch: number; bank: number } {
   const speedFactor = clamp((state.speed - 4.5) / 11, 0, 1);
-  const waterContact = state.airtime > 0 || state.verticalVelocity !== 0 ? 0.35 : 1;
-  const surfacePitch = clamp(Math.atan2(nose.height - tail.height, BOARD_SURFACE_LENGTH) * 1.05, -0.21, 0.24);
-  const surfaceBank = clamp(Math.atan2(rightRail.height - leftRail.height, BOARD_SURFACE_WIDTH) * 0.52, -0.17, 0.17);
+  const waterContact = probePose.contact;
   const livingPitch =
     (Math.sin(time * 2.15 + state.position.z * 0.08) * 0.028 +
       Math.sin(time * 4.4 + state.position.x * 0.11) * 0.012) *
@@ -251,9 +384,26 @@ export function getOrganicBoardTrim(state: SurferState, time: number): { pitch: 
     waterContact;
 
   return {
-    pitch: surfacePitch * waterContact + livingPitch,
-    bank: surfaceBank * waterContact + livingBank,
+    pitch: probePose.pitch * waterContact + livingPitch,
+    bank: probePose.bank * waterContact + livingBank,
   };
+}
+
+function sampleBoardWaterProbe(
+  state: SurferState,
+  time: number,
+  localX: number,
+  localZ: number,
+  forwardX: number,
+  forwardZ: number,
+  rightX: number,
+  rightZ: number,
+): ReturnType<typeof sampleWave> {
+  return sampleWave(
+    state.position.x + rightX * localX + forwardX * localZ,
+    state.position.z + rightZ * localX + forwardZ * localZ,
+    time,
+  );
 }
 
 function createRiderPoseController(rider: PreparedRider): RiderPoseController | null {
@@ -267,18 +417,28 @@ function createRiderPoseController(rider: PreparedRider): RiderPoseController | 
 
   return {
     poseRoot: rider.poseRoot,
+    livingRoot: rider.wrapper,
     poses,
     weights: new Map(),
   };
 }
 
-function updateRiderPose(controller: RiderPoseController, state: SurferState, time: number, dt: number): void {
-  const targetWeights = new Map(getSurferPoseTargets(state, time).map(({ name, weight }) => [name, weight]));
+function updateRiderPose(
+  controller: RiderPoseController,
+  state: SurferState,
+  time: number,
+  dt: number,
+  poseOverride: string | null = null,
+): void {
+  const targetWeights = poseOverride
+    ? new Map([[poseOverride, 1]])
+    : new Map(getSurferPoseTargets(state, time).map(({ name, weight }) => [name, weight]));
   const poseNames = new Set([...controller.poses.keys(), ...targetWeights.keys()]);
   for (const name of poseNames) {
     const current = controller.weights.get(name) ?? 0;
     const target = targetWeights.get(name) ?? 0;
-    const next = dampValue(current, target, target > current ? 7.5 : 5.5, dt);
+    const rate = getPoseBlendRate(name);
+    const next = dampValue(current, target, target > current ? rate.attack : rate.release, dt);
     if (next < 0.0001 && target <= 0) {
       controller.weights.delete(name);
     } else {
@@ -340,7 +500,7 @@ function wrapPositive(value: number, length: number): number {
 async function loadRidingAssets(assetRig: Group, fallback: Group): Promise<RiderPoseController | null> {
   const loader = new GLTFLoader();
   const [boardGltf, riderGltf] = await Promise.all([
-    loader.loadAsync('/assets/models/surfboard-jeremy.glb'),
+    loader.loadAsync(`${import.meta.env.BASE_URL}assets/models/surfboard-jeremy.glb`),
     loader.loadAsync(RIDER_ASSET_URL),
   ]);
 
@@ -361,6 +521,7 @@ function prepareBoard(model: Object3D): Group {
   model.rotation.set(-Math.PI / 2, -Math.PI / 2, 0);
   shortenBoardFins(model);
   placeBoardOnHull(model);
+  applyBoardDepthBiasToObject(model);
   model.position.y += BOARD_HULL_CLEARANCE;
   wrapper.add(model);
   wrapper.rotation.x = -0.05;
@@ -416,6 +577,28 @@ function setRuntimeFlags(model: Object3D): void {
       child.receiveShadow = true;
     }
   });
+}
+
+function applyBoardDepthBiasToObject(model: Object3D): void {
+  model.traverse((child) => {
+    if (!(child instanceof Mesh)) {
+      return;
+    }
+
+    child.renderOrder = BOARD_RENDER_ORDER;
+    const materials = Array.isArray(child.material) ? child.material : [child.material];
+    for (const material of materials) {
+      if (material instanceof MeshStandardMaterial) {
+        applyBoardDepthBias(material);
+      }
+    }
+  });
+}
+
+function applyBoardDepthBias(material: MeshStandardMaterial): void {
+  material.polygonOffset = true;
+  material.polygonOffsetFactor = BOARD_DEPTH_OFFSET_FACTOR;
+  material.polygonOffsetUnits = BOARD_DEPTH_OFFSET_UNITS;
 }
 
 function placeBoardOnHull(model: Object3D): void {

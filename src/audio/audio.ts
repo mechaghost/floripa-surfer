@@ -279,7 +279,7 @@ function createSfx(ctx: AudioContext, dest: AudioNode): SfxState {
   // Event detection state
   let prevAirtime = 0;
   let prevTrickActive = false;
-  let prevScore = 0;
+  let prevBarrelFlash = 0;
   let prevWipeoutTimer = 0;
   let wipeoutFired = false;
 
@@ -382,9 +382,8 @@ function createSfx(ctx: AudioContext, dest: AudioNode): SfxState {
       playSplash(landingIntensity, now);
     }
 
-    // Trick scored: a noticeable score jump while a trick just completed
-    const scoreDelta = state.score - prevScore;
-    if (scoreDelta > 60 && prevTrickActive && !trickActive) {
+    // Made barrel: the exit flash pulses once when a tube is ridden out clean
+    if (state.barrelFlash > 0.9 && prevBarrelFlash <= 0.9) {
       playChime(now);
     }
 
@@ -400,7 +399,7 @@ function createSfx(ctx: AudioContext, dest: AudioNode): SfxState {
 
     prevAirtime = state.airtime;
     prevTrickActive = trickActive;
-    prevScore = state.score;
+    prevBarrelFlash = state.barrelFlash;
     prevWipeoutTimer = state.wipeoutTimer;
   }
 

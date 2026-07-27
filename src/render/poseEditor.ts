@@ -40,7 +40,7 @@ const BOARD_HULL_BOTTOM_PERCENTILE = 0.15;
 const BOARD_HULL_CLEARANCE = 0.02;
 const BOARD_FIN_PROTRUSION_SCALE = 0.32;
 const FOOT_DECK_CLEARANCE = 0.018;
-const BOARD_ASSET_URL = '/assets/models/surfboard-jeremy.glb';
+const BOARD_ASSET_URL = `${import.meta.env.BASE_URL}assets/models/surfboard-jeremy.glb`;
 const HISTORY_LIMIT = 80;
 const KEYBOARD_ROTATION_STEP = 0.035;
 const KEYBOARD_MOVE_STEP = 0.025;
@@ -55,7 +55,7 @@ const MEDIAPIPE_POSE_MODEL_URL = 'https://storage.googleapis.com/mediapipe-model
 const POSE_CAMERA_ORTHO_HEIGHT = 3.8;
 const POSE_CAMERA_TARGET = new Vector3(0, 0.72, 0);
 const POSE_CAMERA_PRESET_OFFSETS: Record<PoseCameraPreset, Vector3> = {
-  iso: new Vector3(3.8, 2.2, 5),
+  iso: new Vector3(3.8, 2.2, -5),
   left: new Vector3(-5.4, 0, 0),
   right: new Vector3(5.4, 0, 0),
   top: new Vector3(0, 5.4, 0.01),
@@ -212,6 +212,8 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
   scene.add(ikRoot);
 
   const ui = createPoseEditorUi(shell);
+  const exitLink = createPoseEditorExitLink();
+  shell.append(exitLink);
   const panelResizeObserver = new ResizeObserver(() => resize());
   panelResizeObserver.observe(ui.panel);
   let markers: PoseMarker[] = [];
@@ -335,13 +337,8 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
 
   function resize(): void {
     const panelRect = ui.panel.getBoundingClientRect();
-    const isMobileLayout = window.matchMedia('(max-width: 720px)').matches;
-    const width = isMobileLayout
-      ? window.innerWidth
-      : Math.max(320, Math.floor(window.innerWidth - panelRect.width - 28));
-    const height = isMobileLayout
-      ? Math.max(180, Math.floor(window.innerHeight - panelRect.height - 20))
-      : window.innerHeight;
+    const width = window.innerWidth;
+    const height = Math.max(220, Math.floor(window.innerHeight - panelRect.height - 20));
 
     renderer.setSize(width, height);
     updateCameraProjection(width, height);
@@ -365,6 +362,7 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
     window.removeEventListener('keydown', onKeyDown);
     window.removeEventListener('resize', resize);
     panelResizeObserver.disconnect();
+    exitLink.remove();
     clearReferenceImageUrl();
     orbitControls.dispose();
     transformControls.dispose();
@@ -819,7 +817,10 @@ export function createPoseEditorView(shell: HTMLElement, renderer: WebGLRenderer
     try {
       const response = await fetch('/__floripa/pose-library', {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: {
+          'content-type': 'application/json',
+          'x-floripa-local-save': '1',
+        },
         body: poseJson,
       });
 
@@ -1272,6 +1273,27 @@ async function loadEditorAssets(): Promise<{ root: Group; rider: Object3D }> {
   const rider = prepareRider(riderGltf.scene, deckY);
   root.add(rider);
   return { root, rider };
+}
+
+function createPoseEditorExitLink(): HTMLAnchorElement {
+  const link = document.createElement('a');
+  link.className = 'game-tool-link';
+  link.href = './';
+  link.textContent = 'Exit';
+  link.setAttribute('aria-label', 'Exit pose editor');
+  attachPoseEditorExitBehavior(link);
+  return link;
+}
+
+function attachPoseEditorExitBehavior(link: HTMLAnchorElement): void {
+  link.addEventListener('pointerdown', (event) => {
+    event.stopPropagation();
+  });
+  link.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    window.location.assign(link.href);
+  });
 }
 
 function prepareBoard(model: Object3D): Group {
@@ -2010,7 +2032,6 @@ function createPoseEditorUi(shell: HTMLElement): {
         <div class="pose-editor__label">Selection</div>
         <div class="pose-editor__selected">No selection</div>
       </div>
-      <a class="pose-editor__button pose-editor__link-button" href="./" aria-label="Exit pose editor">Exit</a>
     </div>
     <div class="pose-editor__status" aria-live="polite">Joint mode: click a joint to rotate it. Switch to IK mode for purple targets.</div>
     <section class="pose-editor__section">
