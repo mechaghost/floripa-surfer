@@ -23,7 +23,7 @@ const CAMERA_LOOK_AHEAD = 1.6;
 const CAMERA_LOOK_HEIGHT = 1.1;
 const CAMERA_YAW_DAMPING = 1.45;
 const CAMERA_LOOK_YAW_DAMPING = 2.15;
-const CAMERA_CLEARANCE_SAMPLES = [0.28, 0.5, 0.75, 1];
+const CAMERA_CLEARANCE_SAMPLES = [0.18, 0.35, 0.55, 0.78, 1];
 const SUN_OFFSET = new Vector3(-18, 30, 16);
 
 export type World = {
@@ -83,8 +83,8 @@ export function createWorld(): World {
     const water = sampleWave(board.x, board.z, time);
     const faceSlope = -(water.slopeX * BREAKER_TRAVEL.x + water.slopeZ * BREAKER_TRAVEL.z);
     const alongCrest = cameraForward.dot(tubeForward);
-    const faceFollow = clamp((water.facePower - 0.28) * 1.7, 0, 0.88) *
-      clamp(faceSlope + 0.28, 0, 1) * clamp(Math.abs(alongCrest) * 2.4, 0, 1);
+    const onFace = clamp((water.facePower - 0.28) * 2.1, 0, 1) * clamp(faceSlope + 0.24, 0, 1);
+    const faceFollow = onFace * 0.88 * clamp(Math.abs(alongCrest) * 2.4, 0, 1);
     const parallelDirection = alongCrest < 0 ? -1 : 1;
     const shoulderForward = tubeForward.clone().multiplyScalar(parallelDirection);
     shoulderForward.x -= BREAKER_TRAVEL.x * 0.45;
@@ -100,6 +100,11 @@ export function createWorld(): World {
       .clone()
       .addScaledVector(cameraForward, -distance)
       .add(new Vector3(0, state.airtime * 0.2 + CAMERA_HEIGHT - tuck * 2.35, 0));
+    const shoreOffset = (desiredPosition.x - board.x) * BREAKER_TRAVEL.x +
+      (desiredPosition.z - board.z) * BREAKER_TRAVEL.z;
+    const shoreCorrection = Math.max(0, 1.9 - shoreOffset) * onFace * (1 - tuck);
+    desiredPosition.x += BREAKER_TRAVEL.x * shoreCorrection;
+    desiredPosition.z += BREAKER_TRAVEL.z * shoreCorrection;
     const lookAhead = (CAMERA_LOOK_AHEAD + state.speed * 0.05) * clamp(camera.aspect / 1.3, 0.2, 1);
     const desiredLook = board
       .clone()
