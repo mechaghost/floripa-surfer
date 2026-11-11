@@ -127,6 +127,15 @@ const detachKeyboard = attachKeyboard(input);
 const clock = new Clock();
 let surferState = createInitialSurferState();
 let elapsed = 0;
+let rippleTime = 0;
+let rideStarted = false;
+const openingPocket = getPocketWorldPosition(0, surferState.position.x, surferState.position.z);
+surferState.position = {
+  x: openingPocket.x + PEEL_DIRECTION.x * 13,
+  z: openingPocket.z + PEEL_DIRECTION.z * 13,
+};
+surferState.heading = -1.09;
+surferState.height = sampleWave(surferState.position.x, surferState.position.z, elapsed).height;
 
 scene.add(
   ocean.mesh,
@@ -150,15 +159,25 @@ resize();
 renderer.setAnimationLoop(tick);
 
 function tick(): void {
-  const dt = Math.min(clock.getDelta(), 1 / 30);
-  elapsed += dt;
-
-  const wave = sampleWave(surferState.position.x, surferState.position.z, elapsed);
-  surferState = updateSurfer(surferState, input, wave, dt);
-  const currentWave = sampleWave(surferState.position.x, surferState.position.z, elapsed);
+  rideStarted ||= Boolean(input.left || input.right || input.forward || input.back || input.jumpPressed);
+  const frameTime = Math.min(clock.getDelta(), 1 / 15);
+  rippleTime += frameTime;
+  const dt = rideStarted ? frameTime : 0;
+  const steps = Math.max(1, Math.ceil(dt * 60));
+  const step = dt / steps;
+  let currentWave = sampleWave(surferState.position.x, surferState.position.z, elapsed);
+  for (let i = 0; i < steps && step > 0; i += 1) {
+    elapsed += step;
+    const startWave = currentWave;
+    surferState = updateSurfer(surferState, input, startWave, step, ({ x, z }) => {
+      currentWave = sampleWave(x, z, elapsed);
+      return currentWave;
+    });
+    input.jumpPressed = false;
+  }
   const pocket = getPocketWorldPosition(elapsed, surferState.position.x, surferState.position.z);
 
-  ocean.update(elapsed, surferState);
+  ocean.update(elapsed, surferState, rippleTime);
   foamField.update(surferState, elapsed);
   surfer.update(surferState, elapsed);
   contactFoam.update(surferState, currentWave.lipPower, elapsed, dt);
@@ -167,7 +186,7 @@ function tick(): void {
   barrelSpit.update(surferState, elapsed, dt);
   waterCues.update(surferState, elapsed);
   seaLife.update(surferState, elapsed, dt);
-  updateCamera(surferState, dt);
+  updateCamera(surferState, dt, elapsed);
   hud.update(surferState, pocket);
   audio.update(surferState, currentWave, input, dt);
   renderer.render(scene, camera);
@@ -952,6 +971,7 @@ if (poseEditorAvailable) {
     getCameraPosition: () => camera.position.clone(),
     debug: {
       warp: (seconds: number) => {
+        rideStarted = true;
         elapsed += seconds;
       },
       teleport: (x: number, z: number, heading?: number) => {
@@ -962,6 +982,9 @@ if (poseEditorAvailable) {
           height: sampleWave(x, z, elapsed).height,
           verticalVelocity: 0,
           airtime: 0,
+          drift: { x: 0, z: 0 },
+          jumpAir: false,
+          flightTime: 0,
         };
       },
       getPocket: () => getPocketWorldPosition(elapsed, surferState.position.x, surferState.position.z),

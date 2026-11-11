@@ -64,6 +64,11 @@ const SHOULDER_RAMP = 17;
 const COLLAPSE_RAMP = 12;
 const WHITEWATER_FADE = 55;
 const SLOPE_EPSILON = 0.4;
+const SET_PROFILES = [
+  { height: 1, width: 1, peelSpeed: 1 },
+  { height: 0.82, width: 1.14, peelSpeed: 0.86 },
+  { height: 1.15, width: 0.96, peelSpeed: 1.07 },
+] as const;
 
 export const BREAKER_TRAVEL = { x: -DIR_X, z: -DIR_Z };
 export const PEEL_DIRECTION = { x: -DIR_Z, z: DIR_X };
@@ -99,6 +104,7 @@ function breakerField(x: number, z: number, time: number): BreakerField {
   const coordinate = x * DIR_X + z * DIR_Z + time * SPEED + PHASE;
   const k = Math.floor(coordinate / PERIOD + 0.5);
   const s = coordinate - k * PERIOD;
+  const profile = setProfile(k);
   const u = x * DIR_Z - z * DIR_X;
   const peel = u - pocketU(k, time);
 
@@ -110,18 +116,20 @@ function breakerField(x: number, z: number, time: number): BreakerField {
   const crestProximity = Math.exp(-(s * s) / 30);
   const whitewater = brokenT * Math.exp(-foamAge / WHITEWATER_FADE) * crestProximity;
 
-  const ampEff = AMPLITUDE * (1 - brokenT * 0.45) * (1 + curl * 0.18);
+  const ampEff = AMPLITUDE * profile.height * (1 - brokenT * 0.45) * (1 + curl * 0.18);
+  const faceLength = FACE_LENGTH * profile.width;
+  const backLength = BACK_LENGTH * profile.width;
   let ridge: number;
   if (s >= 0) {
-    ridge = Math.exp(-(s * s) / (BACK_LENGTH * BACK_LENGTH) * 2.1);
+    ridge = Math.exp(-(s * s) / (backLength * backLength) * 2.1);
   } else {
     // The curl compresses the upper face into a near-vertical wall while the
     // lower face keeps running out ahead, forming the shelf the tube sits on.
     const warp = 1 + curl * 2.4 * Math.exp(-(s * s) / (2.8 * 2.8));
     const sw = s * warp;
-    ridge = Math.exp(-(sw * sw) / (FACE_LENGTH * FACE_LENGTH) * 2.1);
+    ridge = Math.exp(-(sw * sw) / (faceLength * faceLength) * 2.1);
   }
-  const troughCenter = s + FACE_LENGTH * 0.95;
+  const troughCenter = s + faceLength * 0.95;
   const trough =
     -TROUGH_DEPTH * (0.35 + curl * 0.65) * Math.exp(-(troughCenter * troughCenter) / (3.4 * 3.4));
   const churn = whitewater * 0.34 * Math.sin(u * 0.8 + s * 1.4 + time * 2.9);
@@ -144,7 +152,11 @@ function breakerField(x: number, z: number, time: number): BreakerField {
 
 function pocketU(waveIndex: number, time: number): number {
   const localTime = time - (waveIndex * PERIOD) / SPEED;
-  return (pseudo(waveIndex * 17.23 + 3.7) - 0.5) * 76 - PEEL_SPEED * localTime;
+  return (pseudo(waveIndex * 17.23 + 3.7) - 0.5) * 76 - PEEL_SPEED * setProfile(waveIndex).peelSpeed * localTime;
+}
+
+function setProfile(index: number): (typeof SET_PROFILES)[number] {
+  return SET_PROFILES[((index % SET_PROFILES.length) + SET_PROFILES.length) % SET_PROFILES.length];
 }
 
 function ambientHeight(x: number, z: number, time: number): number {

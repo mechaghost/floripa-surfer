@@ -26,12 +26,11 @@ export function createHud(options: HudOptions = {}): Hud {
   root.innerHTML = `
     <section class="hud__brand" aria-label="Game title">
       <span class="hud__place">Floripa Surfer</span>
+      <span class="hud__score" data-score aria-label="Score">0</span>
+      <span class="hud__combo" data-combo></span>
     </section>
     <section class="hud__barrel" data-barrel aria-live="polite"></section>
     <section class="hud__trick" data-trick aria-live="polite"></section>
-    <section class="hud__stoke" aria-label="Stoke meter">
-      <div class="hud__stoke-fill" data-stoke></div>
-    </section>
     <div class="hud__pocket" data-pocket aria-hidden="true">▲</div>
     <button
       type="button"
@@ -44,21 +43,24 @@ export function createHud(options: HudOptions = {}): Hud {
 
   const trick = root.querySelector<HTMLElement>('[data-trick]');
   const barrel = root.querySelector<HTMLElement>('[data-barrel]');
-  const stoke = root.querySelector<HTMLElement>('[data-stoke]');
+  const score = root.querySelector<HTMLElement>('[data-score]');
+  const combo = root.querySelector<HTMLElement>('[data-combo]');
   const pocketArrow = root.querySelector<HTMLElement>('[data-pocket]');
   const muteBtn = root.querySelector<HTMLButtonElement>('[data-mute]');
 
-  if (!trick || !barrel || !stoke || !pocketArrow || !muteBtn) {
+  if (!trick || !barrel || !score || !combo || !pocketArrow || !muteBtn) {
     throw new Error('HUD failed to initialize');
   }
 
   const trickEl = trick;
   const barrelEl = barrel;
-  const stokeEl = stoke;
+  const scoreEl = score;
+  const comboEl = combo;
   const pocketEl = pocketArrow;
   const muteEl = muteBtn;
 
   let muted = initialMuted;
+  let displayedScore = 0;
   applyMuteVisual();
 
   muteEl.addEventListener('click', () => {
@@ -75,8 +77,16 @@ export function createHud(options: HudOptions = {}): Hud {
   }
 
   function update(state: SurferState, pocket: HudPocketInfo): void {
-    trickEl.textContent = state.activeTrick?.name ?? '';
-    trickEl.classList.toggle('hud__trick--active', Boolean(state.activeTrick));
+    const ride = state.ride;
+    if (ride.total !== displayedScore) {
+      displayedScore = ride.total;
+      scoreEl.textContent = ride.total.toLocaleString();
+    }
+    const comboText = ride.combo > 1 ? `×${ride.combo} combo` : '';
+    if (comboEl.textContent !== comboText) comboEl.textContent = comboText;
+    const move = state.activeTrick?.name ?? (ride.remaining > 3.1 ? `${ride.lastMove} +${ride.lastPoints}` : '');
+    if (trickEl.textContent !== move) trickEl.textContent = move;
+    trickEl.classList.toggle('hud__trick--active', Boolean(move));
 
     if (state.barrelTime > 0.2) {
       barrelEl.textContent = `BARREL ${state.barrelTime.toFixed(1)}s`;
@@ -91,9 +101,6 @@ export function createHud(options: HudOptions = {}): Hud {
       barrelEl.classList.remove('hud__barrel--active');
       barrelEl.style.opacity = '';
     }
-
-    stokeEl.style.width = `${Math.round(state.stoke * 100)}%`;
-    stokeEl.classList.toggle('hud__stoke-fill--surging', state.barrelDepth > 0.3);
 
     const dx = pocket.x - state.position.x;
     const dz = pocket.z - state.position.z;

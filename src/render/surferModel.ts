@@ -15,6 +15,7 @@ import {
   Vector3,
 } from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { lerp } from '../game/simulation/math';
 import type { SurferState } from '../game/simulation/surfer';
 import { sampleWave } from '../game/simulation/waves';
 import {
@@ -66,7 +67,8 @@ type PreparedRider = {
 
 type RiderPoseController = {
   poseRoot: Object3D;
-  livingRoot: Object3D;
+  abdomen: Object3D | undefined;
+  head: Object3D | undefined;
   poses: Map<string, SavedPose>;
   weights: Map<string, number>;
 };
@@ -108,17 +110,18 @@ export function getSurferVisualHeight(waterHeight: number): number {
 }
 
 export function getSurferPoseTargets(state: SurferState, time: number): RiderPoseTarget[] {
-  const leanLeft = clamp((Math.max(-state.turn, -state.bank * 1.2) - 0.08) / 0.95, 0, 1);
-  const leanRight = clamp((Math.max(state.turn, state.bank * 1.2) - 0.08) / 0.95, 0, 1);
-  const leanStrength = Math.max(leanLeft, leanRight);
   const isAirborne = state.airtime > 0 || Math.abs(state.verticalVelocity) > 0.02;
+  const lean = (state.turn * 0.45 + state.bank * 0.9) * (isAirborne ? 0.22 : 1);
+  const leanLeft = clamp((-lean - 0.08) / 0.95, 0, 1);
+  const leanRight = clamp((lean - 0.08) / 0.95, 0, 1);
+  const leanStrength = Math.max(leanLeft, leanRight);
   const jumpProgress = state.activeTrick?.name === 'Jump'
     ? clamp(state.activeTrick.timer / state.activeTrick.duration, 0, 1)
     : null;
   const startJump = jumpProgress === null ? 0 : 1 - smoothstep(0.24, 0.62, jumpProgress);
-  const airJump = jumpProgress === null
-    ? (isAirborne ? clamp(0.35 + Math.abs(state.verticalVelocity) * 0.12, 0, 0.92) : 0)
-    : Math.max(isAirborne ? 0.42 : 0, smoothstep(0.2, 0.58, jumpProgress));
+  const airJump = isAirborne
+    ? (jumpProgress === null ? 0.84 : lerp(0.2, 1, smoothstep(0.08, 0.76, jumpProgress)))
+    : 0;
 
   // Situation-driven full-body states layered over the basics: tucking through
   // the tube, streamlining at speed, and bracing through chop and landings.
@@ -127,8 +130,9 @@ export function getSurferPoseTargets(state: SurferState, time: number): RiderPos
     ? clamp((-state.verticalVelocity - 2.6) / 5, 0, 1) * 0.9
     : 0;
   const brace = Math.max(smoothstep(0.25, 0.8, state.churn) * (isAirborne ? 0.4 : 1), state.landImpact, dropFall);
+  const pumpCompression = 0.76 + Math.cos(state.pumpPhase) * 0.24;
   const speedCrouch =
-    (clamp((state.speed - 12.5) / 8, 0, 1) * 0.55 + state.pumpEffort * 0.5) *
+    (clamp((state.speed - 12.5) / 8, 0, 1) * 0.55 + state.pumpEffort * pumpCompression * 0.65) *
     (isAirborne ? 0 : 1) *
     (1 - tuck) *
     (1 - brace);
@@ -259,10 +263,10 @@ export function createSurferModel(): SurferModel {
     const targetVisualHeight = getSurferVisualHeight(targetWaterHeight);
     visualHeight = visualHeight === null
       ? targetVisualHeight
-      : dampValue(visualHeight, targetVisualHeight, waterInfluence > 0.2 ? 13 : 6, dt);
+      : dampValue(visualHeight, targetVisualHeight, waterInfluence > 0.2 ? 18 : 25, dt);
 
     root.position.set(state.position.x, visualHeight, state.position.z);
-    root.rotation.set(visualPitch, getSurferRenderHeading(state.heading), visualBank);
+    root.rotation.set(visualPitch, getSurferRenderHeading(state.heading), visualBank, 'YXZ');
 
     const bounce = Math.sin(time * 10 + state.speed) * 0.025;
     torso.position.y = 0.82 + bounce;
@@ -270,7 +274,6 @@ export function createSurferModel(): SurferModel {
     rightArm.rotation.z = -0.7 + visualBank * 0.8;
     if (riderPoseController) {
       updateRiderPose(riderPoseController, state, time, dt, poseOverride);
-      applyLivingMotion(riderPoseController.livingRoot, state, time);
     }
 
     if (state.activeTrick) {
@@ -290,30 +293,6 @@ export function createSurferModel(): SurferModel {
       poseOverride = name;
     },
   };
-}
-
-// Procedural secondary motion layered over the blended pose: a speed-scaled
-// bounce, a carve-synced sway, a tight shiver in the tube, and churn shake in
-// whitewater. Applied to the rider wrapper so authored poses stay untouched.
-function applyLivingMotion(livingRoot: Object3D, state: SurferState, time: number): void {
-  const airborne = state.airtime > 0 || Math.abs(state.verticalVelocity) > 0.02;
-  const grounded = airborne ? 0 : 1;
-  const speedFactor = clamp((state.speed - 4.5) / 12, 0, 1);
-
-  const bob =
-    Math.sin(time * (4.1 + state.speed * 0.2)) * (0.008 + speedFactor * 0.016) * grounded +
-    Math.sin(time * 5.6) * state.pumpEffort * 0.02 * grounded -
-    state.landImpact * 0.05;
-  const shiver = Math.sin(time * 11.3) * 0.006 * state.barrelDepth;
-  const churnShake = Math.sin(time * 13.7) * 0.014 * state.churn * grounded;
-
-  livingRoot.position.y = bob + shiver;
-  livingRoot.rotation.z =
-    Math.sin(time * 2.6 + 1.3) * 0.02 * speedFactor * grounded + churnShake;
-  livingRoot.rotation.x =
-    Math.sin(time * 3.4 + 0.6) * 0.014 * speedFactor * grounded +
-    state.pumpEffort * Math.sin(time * 5.6 + 0.8) * 0.022 * grounded;
-  livingRoot.rotation.y = Math.sin(time * 1.9) * 0.012 * speedFactor;
 }
 
 export function getOrganicBoardTrim(state: SurferState, time: number): { pitch: number; bank: number } {
@@ -417,7 +396,8 @@ function createRiderPoseController(rider: PreparedRider): RiderPoseController | 
 
   return {
     poseRoot: rider.poseRoot,
-    livingRoot: rider.wrapper,
+    abdomen: rider.poseRoot.getObjectByName('Abdomen'),
+    head: rider.poseRoot.getObjectByName('Head'),
     poses,
     weights: new Map(),
   };
@@ -455,6 +435,14 @@ function updateRiderPose(
   }
 
   applyWeightedPosesToObject(weightedPoses, controller.poseRoot);
+  if (!poseOverride) {
+    // Add balance and look-ahead above the hips so neither foot moves.
+    const grounded = state.airtime <= 0 && Math.abs(state.verticalVelocity) <= 0.02 ? 1 : 0;
+    const pump = Math.cos(state.pumpPhase) * state.pumpEffort * grounded;
+    controller.abdomen?.rotateX(0.04 * pump + state.landImpact * 0.11 + Math.sin(time * 2.9) * 0.012);
+    controller.abdomen?.rotateZ(state.bank * -0.12 + Math.sin(time * 13.7) * state.churn * 0.035);
+    controller.head?.rotateY(clamp(-state.turn * 0.16, -0.23, 0.23));
+  }
 }
 
 function captureObjectPose(root: Object3D): SavedPose {

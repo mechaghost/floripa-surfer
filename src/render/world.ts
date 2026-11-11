@@ -14,8 +14,8 @@ import {
   Vector3,
 } from 'three';
 import type { SurferState } from '../game/simulation/surfer';
-import { damp } from '../game/simulation/math';
-import { PEEL_DIRECTION } from '../game/simulation/waves';
+import { clamp, damp } from '../game/simulation/math';
+import { BREAKER_TRAVEL, PEEL_DIRECTION, sampleWave } from '../game/simulation/waves';
 
 const CAMERA_DISTANCE = 7;
 const CAMERA_HEIGHT = 2.9;
@@ -23,12 +23,13 @@ const CAMERA_LOOK_AHEAD = 1.6;
 const CAMERA_LOOK_HEIGHT = 1.1;
 const CAMERA_YAW_DAMPING = 1.45;
 const CAMERA_LOOK_YAW_DAMPING = 2.15;
+const CAMERA_CLEARANCE_SAMPLES = [0.28, 0.5, 0.75, 1];
 const SUN_OFFSET = new Vector3(-18, 30, 16);
 
 export type World = {
   scene: Scene;
   camera: PerspectiveCamera;
-  updateCamera: (state: SurferState, dt: number) => void;
+  updateCamera: (state: SurferState, dt: number, time: number) => void;
 };
 
 export function createWorld(): World {
@@ -63,7 +64,7 @@ export function createWorld(): World {
   const backdrop = createFloripaBackdrop();
   scene.add(backdrop);
 
-  function updateCamera(state: SurferState, dt: number): void {
+  function updateCamera(state: SurferState, dt: number, time: number): void {
     const board = new Vector3(state.position.x, state.height + 0.4, state.position.z);
     if (!initialized) {
       cameraHeading = state.heading;
@@ -78,9 +79,18 @@ export function createWorld(): World {
     // corridor of water instead of cutting through the wall or the lip.
     const tuck = state.barrelDepth;
     const tubeForward = new Vector3(PEEL_DIRECTION.x, 0, PEEL_DIRECTION.z);
-    const cameraForward = new Vector3(Math.sin(cameraHeading), 0, -Math.cos(cameraHeading))
-      .lerp(tubeForward, tuck * 0.85)
-      .normalize();
+    const cameraForward = new Vector3(Math.sin(cameraHeading), 0, -Math.cos(cameraHeading));
+    const water = sampleWave(board.x, board.z, time);
+    const faceSlope = -(water.slopeX * BREAKER_TRAVEL.x + water.slopeZ * BREAKER_TRAVEL.z);
+    const alongCrest = cameraForward.dot(tubeForward);
+    const faceFollow = clamp((water.facePower - 0.28) * 1.7, 0, 0.88) *
+      clamp(faceSlope + 0.28, 0, 1) * clamp(Math.abs(alongCrest) * 2.4, 0, 1);
+    const parallelDirection = alongCrest < 0 ? -1 : 1;
+    const shoulderForward = tubeForward.clone().multiplyScalar(parallelDirection);
+    shoulderForward.x -= BREAKER_TRAVEL.x * 0.45;
+    shoulderForward.z -= BREAKER_TRAVEL.z * 0.45;
+    cameraForward.lerp(shoulderForward.normalize(), faceFollow);
+    cameraForward.lerp(tubeForward, tuck * 0.85).normalize();
     const lookForward = new Vector3(Math.sin(lookHeading), 0, -Math.cos(lookHeading))
       .lerp(tubeForward, tuck * 0.6)
       .normalize();
@@ -90,9 +100,10 @@ export function createWorld(): World {
       .clone()
       .addScaledVector(cameraForward, -distance)
       .add(new Vector3(0, state.airtime * 0.2 + CAMERA_HEIGHT - tuck * 2.35, 0));
+    const lookAhead = (CAMERA_LOOK_AHEAD + state.speed * 0.05) * clamp(camera.aspect / 1.3, 0.2, 1);
     const desiredLook = board
       .clone()
-      .addScaledVector(lookForward, CAMERA_LOOK_AHEAD + state.speed * 0.05)
+      .addScaledVector(lookForward, lookAhead)
       .add(new Vector3(0, CAMERA_LOOK_HEIGHT + tuck * 0.55, 0));
 
     if (!initialized) {
@@ -106,6 +117,16 @@ export function createWorld(): World {
       lookTarget.x = damp(lookTarget.x, desiredLook.x, 13, dt);
       lookTarget.y = damp(lookTarget.y, desiredLook.y, 8, dt);
       lookTarget.z = damp(lookTarget.z, desiredLook.z, 13, dt);
+    }
+    // The water can rise faster than the smoothed camera. Check the sightline
+    // above the rider as well as the camera position before drawing the frame.
+    const focusHeight = board.y + 0.15;
+    for (const fraction of CAMERA_CLEARANCE_SAMPLES) {
+      const x = board.x + (camera.position.x - board.x) * fraction;
+      const z = board.z + (camera.position.z - board.z) * fraction;
+      const height = sampleWave(x, z, time).height + 0.34;
+      const minimumY = focusHeight + (height - focusHeight) / fraction;
+      camera.position.y = Math.max(camera.position.y, minimumY);
     }
     camera.lookAt(lookTarget);
 

@@ -179,6 +179,54 @@ describe('surfer simulation', () => {
     expect(Math.abs(next.pitch)).toBeLessThan(0.36);
   });
 
+  it('tracks the water at the destination and lands on a rising face', () => {
+    const state = createInitialSurferState();
+    const idle = createInputState();
+    const flat = makeWave();
+    const rising = makeWave({ height: 0.14 });
+    const grounded = updateSurfer(state, idle, flat, 1 / 60, () => rising);
+    expect(grounded.height).toBeCloseTo(rising.height);
+
+    state.height = 0.13;
+    state.airtime = 0.1;
+    state.verticalVelocity = -1;
+    const landed = updateSurfer(state, idle, flat, 1 / 60, () => rising);
+    expect(landed.height).toBe(rising.height);
+    expect(landed.verticalVelocity).toBe(0);
+    expect(landed.landImpact).toBeGreaterThan(0.6);
+  });
+
+  it('chains a carve and a clean landing, then loses the multiplier in whitewater', () => {
+    let state = createInitialSurferState();
+    const face = makeWave({ facePower: 0.8 });
+    const carve = { ...createInputState(), right: 1 };
+    const idle = createInputState();
+    for (let i = 0; i < 45; i += 1) state = updateSurfer(state, carve, face, 1 / 60);
+    expect(state.ride.lastMove).toBe('Power Carve');
+    expect(state.ride.combo).toBe(1);
+    const carveScore = state.ride.total;
+
+    state = updateSurfer(state, { ...idle, jumpPressed: true }, face, 1 / 60);
+    for (let i = 0; i < 125; i += 1) state = updateSurfer(state, idle, face, 1 / 60);
+    expect(state.ride.lastMove).toBe('Clean Air');
+    expect(state.ride.combo).toBe(2);
+    expect(state.ride.total).toBe(carveScore + state.ride.lastPoints);
+
+    state = updateSurfer(state, idle, makeWave({ whitewater: 0.8 }), 1 / 60);
+    expect(state.ride.combo).toBe(0);
+    expect(state.ride.total).toBeGreaterThan(carveScore);
+  });
+
+  it('does not jump again when the player holds the jump key through landing', () => {
+    let state = createInitialSurferState();
+    const hold = { ...createInputState(), trick: true };
+    const shoulder = makeWave({ facePower: 0.65 });
+    for (let i = 0; i < 240; i += 1) state = updateSurfer(state, hold, shoulder, 1 / 60);
+    expect(state.height).toBe(0);
+    expect(state.ride.lastMove).toBe('Clean Air');
+    expect(state.ride.total).toBe(state.ride.lastPoints);
+  });
+
   it('keeps traveling through the world instead of wrapping or resetting at old boundaries', () => {
     const state = createInitialSurferState();
     state.position.z = -120;

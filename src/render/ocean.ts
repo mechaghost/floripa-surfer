@@ -21,7 +21,7 @@ export type OceanBoardState = Pick<
 
 export type Ocean = {
   mesh: Mesh<BufferGeometry, ShaderMaterial>;
-  update: (time: number, board: OceanBoardState) => void;
+  update: (time: number, board: OceanBoardState, rippleTime?: number) => void;
 };
 
 export type BoardWaterDeformation = {
@@ -46,7 +46,7 @@ const shadow = new Color('#05495f');
 const face = new Color('#06a7b8');
 const brightFace = new Color('#60d1d6');
 const foam = new Color('#f2ffff');
-const VISUAL_CENTER_SMOOTHING = 0.55;
+const VISUAL_CENTER_SMOOTHING = 1.9;
 const WATER_DEPTH_OFFSET_FACTOR = 1;
 const WATER_DEPTH_OFFSET_UNITS = 2;
 const BOARD_LENGTH = 4.65;
@@ -76,11 +76,18 @@ type StampBounds = {
 };
 
 export function createOcean(): Ocean {
-  const geometry = new PlaneGeometry(290, 235, 164, 156);
+  const width = 290;
+  const depth = 235;
+  const geometry = new PlaneGeometry(width, depth, 164, 156);
   geometry.rotateX(-Math.PI / 2);
 
   const vertexCount = geometry.attributes.position.count;
   const basePositions = new Float32Array(geometry.attributes.position.array);
+  // Keep the close-up mesh finer without adding vertices to the far ocean.
+  for (let i = 0; i < basePositions.length; i += 3) {
+    basePositions[i] = oceanGridCoordinate(basePositions[i], width * 0.5);
+    basePositions[i + 2] = oceanGridCoordinate(basePositions[i + 2], depth * 0.5);
+  }
   const colors = new Float32Array(vertexCount * 3);
   geometry.setAttribute('color', new BufferAttribute(colors, 3));
   const info = new Float32Array(vertexCount * 3);
@@ -117,7 +124,7 @@ export function createOcean(): Ocean {
         vColor = color;
         vInfo = info;
         vec3 transformedNormal = normal;
-        vNormal = normalize(normalMatrix * transformedNormal);
+        vNormal = normalize(mat3(modelMatrix) * transformedNormal);
         vec4 worldPosition = modelMatrix * vec4(position, 1.0);
         vWorldPosition = worldPosition.xyz;
 
@@ -154,10 +161,19 @@ export function createOcean(): Ocean {
 
       void main() {
         float interior = gl_FrontFacing ? 0.0 : 1.0;
-        vec3 normal = normalize(vNormal) * (gl_FrontFacing ? 1.0 : -1.0);
-        vec3 viewDirection = normalize(cameraPosition - vWorldPosition);
-        float fresnel = pow(1.0 - max(dot(normal, viewDirection), 0.0), 2.0);
-        float sun = pow(max(dot(reflect(-uSunDirection, normal), viewDirection), 0.0), 26.0);
+        vec3 toCamera = cameraPosition - vWorldPosition;
+        vec3 viewDirection = normalize(toCamera);
+        vec2 p = vWorldPosition.xz;
+        float distanceToCamera = length(toCamera);
+        float detail = 1.0 - smoothstep(24.0, 108.0, distanceToCamera);
+        float swell = sin(dot(p, vec2(0.72, 1.09)) + uTime * 1.45);
+        float rippleA = cos(dot(p, vec2(2.45, 1.8)) + swell * 0.85 - uTime * 2.5);
+        float rippleB = cos(dot(p, vec2(-1.4, 3.5)) + uTime * 2.1);
+        vec3 rippleNormal = vec3(rippleA * 0.06 - rippleB * 0.035, 0.0, rippleA * 0.04 + rippleB * 0.07);
+        vec3 normal = normalize(vNormal + rippleNormal * detail) * (gl_FrontFacing ? 1.0 : -1.0);
+        float fresnel = pow(1.0 - max(dot(normal, viewDirection), 0.0), 3.0);
+        float sunAngle = max(dot(reflect(-uSunDirection, normal), viewDirection), 0.0);
+        float sun = pow(sunAngle, 68.0) * 0.5 + pow(sunAngle, 15.0) * 0.14;
         float softSun = pow(max(dot(normal, uSunDirection), 0.0), 1.15);
         float facetLight = clamp(normal.y * 0.62 + normal.z * 0.16 + 0.42, 0.0, 1.0);
 
@@ -166,7 +182,6 @@ export function createOcean(): Ocean {
         // Underside of the folded sheet is always tube interior.
         float cave = max(vInfo.z, interior * 0.85);
 
-        vec2 p = vWorldPosition.xz;
         float longFoamLines =
           waveLine(p + vec2(0.0, uTime * 0.25), 0.17, 0.42, 0.035) * 0.34 +
           waveLine(p.yx + vec2(uTime * 0.18, 0.0), 0.24, -0.35, 0.03) * 0.2;
@@ -178,14 +193,18 @@ export function createOcean(): Ocean {
           sin(p.x * 4.7 - p.y * 3.9 - uTime * 2.7 + 1.7) * 0.33 +
           sin(p.x * 9.3 + p.y * 8.1 + uTime * 3.6) * 0.17
         );
-        float foamDetail = smoothstep(0.22, 0.78, foamAmount * (0.62 + 0.38 * boil) + longFoamLines * foamAmount * 0.4);
+        float lace = 1.0 - smoothstep(0.08, 0.48, abs(rippleA + rippleB * 0.62 + swell * 0.3));
+        float foamDetail = smoothstep(0.16, 0.76,
+          foamAmount * (0.58 + 0.28 * boil + 0.45 * lace * detail) + longFoamLines * foamAmount * 0.4);
 
         vec3 water = mix(uDeep, uFace, clamp(vColor.g * 1.18 + softSun * 0.16, 0.0, 1.0));
         water = mix(water, vColor, 0.7);
         water *= 0.76 + facetLight * 0.38;
-        water += vec3(0.08, 0.2, 0.22) * fresnel * (1.0 - cave * 0.8);
-        water += vec3(0.08, 0.14, 0.14) * longFoamLines * (1.0 - cave);
-        water += vec3(1.0, 0.96, 0.78) * sun * 0.28 * (1.0 - cave * 0.7);
+        vec3 skyReflection = mix(vec3(0.29, 0.61, 0.72), vec3(0.68, 0.85, 0.87),
+          clamp(reflect(-viewDirection, normal).y, 0.0, 1.0));
+        water = mix(water, skyReflection, fresnel * (0.48 - cave * 0.4));
+        water += vec3(0.045, 0.11, 0.12) * longFoamLines * (1.0 - cave);
+        water += vec3(1.0, 0.93, 0.74) * sun * (1.0 - cave * 0.7);
 
         // Flow streaks climbing the steep part of the face keep the wall from
         // reading as a flat sheet.
@@ -203,11 +222,12 @@ export function createOcean(): Ocean {
         float backlight = clamp(dot(viewDirection, -uSunDirection) * 0.5 + 0.5, 0.0, 1.0);
         water += vec3(0.14, 0.78, 0.72) * thin * (0.35 + backlight * 0.65) * (0.55 - interior * 0.2);
 
-        water = mix(water, uFoam, clamp(foamDetail * 0.9 + foamAmount * 0.22, 0.0, 0.95));
+        water = mix(water, uFoam, clamp(foamDetail * 0.88 + foamAmount * 0.19, 0.0, 0.95));
 
         float castShadow = 1.0 - getShadowMask();
         water *= 1.0 - castShadow * 0.34;
         water = mix(water, vec3(0.02, 0.2, 0.25), castShadow * 0.16);
+        water = mix(water, vec3(0.51, 0.75, 0.79), smoothstep(48.0, 145.0, distanceToCamera) * 0.74);
 
         gl_FragColor = vec4(water, 1.0);
       }
@@ -230,7 +250,8 @@ export function createOcean(): Ocean {
   const wakeStamps: WaterDeformationStamp[] = [];
   const stampBounds: StampBounds[] = [];
 
-  function update(time: number, board: OceanBoardState): void {
+  function update(time: number, board: OceanBoardState, rippleTime = time): void {
+    material.uniforms.uTime.value = rippleTime;
     const position = geometry.attributes.position;
     const color = geometry.attributes.color;
     const infoAttribute = geometry.attributes.info;
@@ -245,7 +266,6 @@ export function createOcean(): Ocean {
       visualCenterZ = dampValue(visualCenterZ, board.position.z, VISUAL_CENTER_SMOOTHING, dt);
     }
     mesh.position.set(visualCenterX, 0, visualCenterZ);
-    material.uniforms.uTime.value = time;
     ageWakeStamps(wakeStamps, dt);
 
     const boardContact = getBoardWaterContactStrength(
@@ -335,6 +355,11 @@ export function createOcean(): Ocean {
   }
 
   return { mesh, update };
+}
+
+function oceanGridCoordinate(coordinate: number, halfExtent: number): number {
+  const distance = Math.abs(coordinate) / halfExtent;
+  return coordinate * (0.41 + 0.59 * Math.pow(distance, 1.4));
 }
 
 export function getBoardWaterDeformation(

@@ -30,7 +30,6 @@ export function createTouchControls(input: InputState, target: HTMLElement): Tou
   let lastX = 0;
   let lastY = 0;
   let isDragging = false;
-  let jumpTimer: number | null = null;
 
   if (!pad || !knob || !tapFlash) {
     throw new Error('Touch controls failed to initialize');
@@ -66,24 +65,12 @@ export function createTouchControls(input: InputState, target: HTMLElement): Tou
   };
 
   const triggerJump = (clientX: number, clientY: number) => {
-    input.trick = true;
-    input.trickUp = false;
-    input.trickDown = false;
-    input.trickLeft = false;
-    input.trickRight = false;
+    input.jumpPressed = true;
     tapFlash.style.left = `${clientX}px`;
     tapFlash.style.top = `${clientY}px`;
     tapFlash.classList.remove('touch__tap--active');
     tapFlash.offsetWidth;
     tapFlash.classList.add('touch__tap--active');
-
-    if (jumpTimer !== null) {
-      window.clearTimeout(jumpTimer);
-    }
-    jumpTimer = window.setTimeout(() => {
-      input.trick = false;
-      jumpTimer = null;
-    }, 150);
   };
 
   const onPointerDown = (event: PointerEvent) => {
@@ -147,9 +134,6 @@ export function createTouchControls(input: InputState, target: HTMLElement): Tou
     target.removeEventListener('pointerup', onPointerUp);
     target.removeEventListener('pointercancel', onPointerCancel);
     target.removeEventListener('lostpointercapture', onPointerCancel);
-    if (jumpTimer !== null) {
-      window.clearTimeout(jumpTimer);
-    }
   });
 
   return {

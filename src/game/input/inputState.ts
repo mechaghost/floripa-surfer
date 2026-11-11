@@ -4,6 +4,7 @@ export type InputState = {
   left: number;
   right: number;
   trick: boolean;
+  jumpPressed: boolean;
   trickUp: boolean;
   trickDown: boolean;
   trickLeft: boolean;
@@ -17,6 +18,7 @@ export function createInputState(): InputState {
     left: 0,
     right: 0,
     trick: false,
+    jumpPressed: false,
     trickUp: false,
     trickDown: false,
     trickLeft: false,
@@ -61,6 +63,7 @@ function setKey(input: InputState, event: KeyboardEvent, active: boolean): void 
       input.right = value;
       break;
     case 'Space':
+      if (active && !event.repeat) input.jumpPressed = true;
       input.trick = active;
       event.preventDefault();
       break;
